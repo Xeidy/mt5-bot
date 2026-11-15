@@ -56,12 +56,13 @@ class MetaApi(private val token: String, val accountId: String) {
     fun init(): JSONObject {
         val acc = JSONObject(request("GET", "$provisioning/users/current/accounts/$accountId"))
         region = acc.optString("region", "new-york").ifBlank { "new-york" }
-        val domain = try {
-            JSONObject(request("GET", "$provisioning/users/current/servers/mt-client-api"))
-                .optString("domain", "agiliumtrade.ai")
-        } catch (e: ApiException) {
-            "agiliumtrade.ai"
-        }.ifBlank { "agiliumtrade.ai" }
+        var domain = "agiliumtrade.ai"
+        try {
+            val d = JSONObject(request("GET", "$provisioning/users/current/servers/mt-client-api"))
+                .optString("domain", "")
+            if (d.isNotBlank()) domain = d
+        } catch (_: ApiException) {
+        }
         clientHost = "https://mt-client-api-v1.$region.$domain"
         marketHost = "https://mt-market-data-client-api-v1.$region.$domain"
         return acc
