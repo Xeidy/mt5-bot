@@ -8,7 +8,8 @@ object Settings {
 
     fun defaults(): JSONObject = JSONObject()
         .put("symbols", "XAUUSD")
-        .put("strategy", "ema_rsi")
+        .put("strategy", "trend")
+        .put("donchian_n", 55)
         .put("allow_stacking", false)
         .put("layering", false)
         .put("layer_step_atr", 0.5)
@@ -95,7 +96,9 @@ object Settings {
         if (cur.getInt("max_symbols_open") < 1) return "Maks pair bersamaan minimal 1"
         if (cur.getString("timeframe") !in TIMEFRAMES) return "Timeframe tidak valid"
         if (cur.getString("risk_mode") !in setOf("percent", "fixed")) return "Mode lot tidak valid"
-        if (cur.getString("strategy") !in setOf("ema_rsi", "scalp")) return "Strategi tidak valid"
+        if (cur.getString("strategy") !in setOf("trend", "ema_rsi", "scalp")) return "Strategi tidak valid"
+        val dn = cur.getInt("donchian_n")
+        if (dn < 5 || dn > 300) return "Periode breakout harus 5–300"
         val risk = cur.getDouble("risk_percent")
         if (risk <= 0 || risk > 20) return "Risiko per sinyal harus 0–20%"
         if (cur.getDouble("fixed_lot") <= 0) return "Lot harus > 0"

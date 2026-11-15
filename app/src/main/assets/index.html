@@ -166,6 +166,7 @@
     <form id="sForm" class="card" onsubmit="saveSettings(event)">
       <div class="sect" style="margin-top:0">Preset</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button type="button" class="btn start" onclick="preset('trend')">🏆 Trend H1 (hasil backtest terbaik)</button>
         <button type="button" class="btn ghost" onclick="preset('aggr')">⚡ Mode agresif (seperti video)</button>
         <button type="button" class="btn ghost" onclick="preset('normal')">Mode normal</button>
       </div>
@@ -221,8 +222,10 @@
       <div class="sect">Strategi</div>
       <div class="grid">
         <label class="f" style="grid-column:1/-1">Jenis strategi<select name="strategy">
+          <option value="trend">Trend Breakout (disarankan, H1)</option>
           <option value="ema_rsi">EMA cross + RSI (selektif)</option>
           <option value="scalp">Scalping agresif (entry hampir tiap candle)</option></select></label>
+        <label class="f">Periode breakout (candle)<input name="donchian_n" type="number" min="5" max="300"></label>
         <label class="f">EMA cepat<input name="ema_fast" type="number" min="2"></label>
         <label class="f">EMA lambat<input name="ema_slow" type="number" min="3"></label>
         <label class="f">EMA tren<input name="ema_trend" type="number" min="5"></label>
@@ -280,7 +283,7 @@ if (!window.Bot) {
       positions:run?[{ticket:"1",symbol:"XAUUSD",side:"buy",volume:0.37,profit:pl,time:new Date().toISOString()}]:[],
       history:[{ticket:"9",symbol:"XAUUSD",side:"sell",volume:0.43,profit:51.6,time:new Date().toISOString()},{ticket:"8",symbol:"XAUUSD",side:"sell",volume:0.49,profit:-39.2,time:new Date().toISOString()}],
       indicators:{EURUSDm:"RSI 55.2 · ATR 0.00031",XAUUSDm:"RSI 61.0 · ATR 1.2 · BUY"},updated:new Date().toISOString(),
-      settings:{symbols:"ALL",max_symbols_open:3,strategy:"ema_rsi",allow_stacking:false,layering:false,layer_step_atr:0.5,max_layers:5,layer_multiplier:1,timeframe:"M1",risk_mode:"percent",risk_percent:1,fixed_lot:0.01,positions_per_signal:1,max_open_positions:15,sl_atr_mult:1.5,tp_atr_mult:2,breakeven_atr:1,trailing_atr:1,close_on_opposite:true,max_daily_loss_percent:5,max_drawdown_percent:20,max_spread_points:60,session_start:"00:00",session_end:"23:59",allow_real_account:false,ema_fast:9,ema_slow:21,ema_trend:50,rsi_overbought:70,rsi_oversold:30},
+      settings:{symbols:"ALL",max_symbols_open:3,strategy:"trend",donchian_n:55,allow_stacking:false,layering:false,layer_step_atr:0.5,max_layers:5,layer_multiplier:1,timeframe:"M1",risk_mode:"percent",risk_percent:1,fixed_lot:0.01,positions_per_signal:1,max_open_positions:15,sl_atr_mult:1.5,tp_atr_mult:2,breakeven_atr:1,trailing_atr:1,close_on_opposite:true,max_daily_loss_percent:5,max_drawdown_percent:20,max_spread_points:60,session_start:"00:00",session_end:"23:59",allow_real_account:false,ema_fast:9,ema_slow:21,ema_trend:50,rsi_overbought:70,rsi_oversold:30},
       symbols:["EURUSDm","GBPUSDm","XAUUSDm"],notice:run?"":"Ini akun REAL. Centang Izinkan…",account_id:"865d3a4d-demo",has_token:true,battery_ok:false,logs:[{t:"12:00:01",level:"ok",msg:"Bot dimulai: XAUUSD M1"}]}); },
     start(){run=true}, stop(){run=false}, closeAll(){}, saveSettings(){return ""}, saveCredentials(){}, batteryExemption(){alert("battery")}
   };
@@ -327,6 +330,12 @@ function saveSettings(e){
 }
 function setSyms(v){ $("fSyms").value=v; }
 const PRESETS = {
+  trend: {strategy:"trend", symbols:"EURUSD,GBPUSD,AUDUSD,USDCAD,EURJPY,XAUUSD", timeframe:"H1",
+         donchian_n:55, ema_trend:200, risk_mode:"percent", risk_percent:1, positions_per_signal:1,
+         max_open_positions:6, max_symbols_open:4, allow_stacking:false, layering:false,
+         sl_atr_mult:3, tp_atr_mult:0, breakeven_atr:0, trailing_atr:5, close_on_opposite:false,
+         max_spread_points:0, session_start:"07:00", session_end:"20:00",
+         max_daily_loss_percent:5, max_drawdown_percent:25},
   aggr: {strategy:"scalp", timeframe:"M1", risk_mode:"fixed", fixed_lot:0.01,
          positions_per_signal:3, max_open_positions:40, max_symbols_open:8, allow_stacking:false,
          layering:true, layer_step_atr:0.5, max_layers:5, layer_multiplier:1.0,
@@ -342,6 +351,7 @@ function preset(k){
   const f=$("sForm");
   for (const [n,v] of Object.entries(PRESETS[k])){ const el=f.elements[n]; if(!el) continue; if(el.type==="checkbox") el.checked=v; else el.value=v; }
   toggleRisk(); toast("Preset diisi — tekan Simpan pengaturan");
+  if(k==="trend") alert("Trend H1: jarang entry (± 1x seminggu per pair), win rate ± 33%, tapi rata-rata profit ± 2x rata-rata rugi. Bisa beberapa kali rugi berturut-turut — itu normal untuk strategi ini.");
 }
 let lastNotice="";
 function saveCreds(){

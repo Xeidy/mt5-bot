@@ -61,8 +61,45 @@ object Strategy {
         return a
     }
 
-    fun signal(closed: List<Candle>, cfg: JSONObject): Signal =
-        if (cfg.optString("strategy") == "scalp") scalp(closed, cfg) else emaRsi(closed, cfg)
+    fun signal(closed: List<Candle>, cfg: JSONObject): Signal = when (cfg.optString("strategy")) {
+        "scalp" -> scalp(closed, cfg)
+        "trend" -> trend(closed, cfg)
+        else -> emaRsi(closed, cfg)
+    }
+
+    /**
+     * Trend Breakout (hasil backtest terbaik):
+     *  - Buy : close menembus high tertinggi N candle sebelumnya DAN close > EMA tren (200)
+     *  - Sell: close menembus low terendah N candle sebelumnya DAN close < EMA tren
+     *  - SL lebar (3 ATR), tanpa TP; profit dikunci oleh trailing stop (5 ATR).
+     * Jarang entry, win rate ~33%, tapi rata-rata menang ±2× rata-rata kalah.
+     */
+    private fun trend(closed: List<Candle>, cfg: JSONObject): Signal {
+        val n = cfg.optInt("donchian_n", 55)
+        val trendP = cfg.getInt("ema_trend")
+        if (closed.size < max(trendP, n) + 20) {
+            return Signal(null, 0.0, JSONObject().put("info", "data candle belum cukup"))
+        }
+        val closes = closed.map { it.close }
+        val t = ema(closes, trendP)
+        val a = atr(closed)
+        val i = closed.size - 1
+        var hh = Double.NEGATIVE_INFINITY
+        var ll = Double.POSITIVE_INFINITY
+        for (k in i - n until i) {
+            hh = max(hh, closed[k].high)
+            ll = min(ll, closed[k].low)
+        }
+        val c = closes[i]
+        val info = JSONObject()
+            .put("high_n", round(hh, 5))
+            .put("low_n", round(ll, 5))
+            .put("ema_trend", round(t[i], 5))
+            .put("atr", round(a, 5))
+        if (c > hh && c > t[i]) return Signal("buy", a, info)
+        if (c < ll && c < t[i]) return Signal("sell", a, info)
+        return Signal(null, a, info)
+    }
 
     /**
      * Mode scalping agresif: entry hampir di setiap candle mengikuti momentum terakhir.

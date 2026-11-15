@@ -429,7 +429,10 @@ object Engine {
                 val sig = Strategy.signal(closed, cfg)
                 atrMap[sym] = sig.atr
                 val sideTxt = sig.side?.let { " · ${it.uppercase()}" } ?: ""
-                infoMap[sym] = if (sig.info.has("rsi"))
+                infoMap[sym] = if (sig.info.has("high_n")) {
+                    val dg = if (sig.info.optDouble("atr") < 0.01) 5 else 2
+                    "Range ${fmtPrice(sig.info.optDouble("low_n"), dg)}–${fmtPrice(sig.info.optDouble("high_n"), dg)} · ATR ${sig.info.optDouble("atr")}$sideTxt"
+                } else if (sig.info.has("rsi"))
                     "RSI ${sig.info.optDouble("rsi")} · ATR ${sig.info.optDouble("atr")}$sideTxt"
                 else sig.info.optString("info")
                 if (sig.side != null) signals.add(Pair(sym, sig))
@@ -589,7 +592,9 @@ object Engine {
             val gain = if (p.buy) p.current - p.open else p.open - p.current
             var newSl: Double? = null
             if (be > 0 && gain >= be * atr) newSl = p.open
-            if (tr > 0 && gain >= tr * atr) {
+            // Strategi trend: trailing langsung mengikuti harga (chandelier), sesuai backtest
+            val trailNow = cfg.getString("strategy") == "trend"
+            if (tr > 0 && (trailNow || gain >= tr * atr)) {
                 val cand = if (p.buy) p.current - tr * atr else p.current + tr * atr
                 val cur = newSl
                 if (cur == null || (p.buy && cand > cur) || (!p.buy && cand < cur)) newSl = cand
