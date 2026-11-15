@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0b0c">
+<title>mt5-bot</title>
+<style>
+  :root{
+    --bg:#0b0b0c; --card:#141416; --card2:#1b1b1e; --line:#26262a;
+    --text:#ecebe6; --mute:#8b8a85; --gold:#c9a24a; --gold2:#8a6d2a;
+    --green:#3ecf8e; --red:#ff5a5f; --blue:#5a8dff;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:var(--bg);color:var(--text);font:15px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+  .wrap{max-width:520px;margin:0 auto;padding:14px 14px 40px}
+  label.f textarea{background:var(--card2);border:1px solid var(--line);color:var(--text);border-radius:10px;padding:10px;font-size:13px;width:100%;min-height:90px;font-family:ui-monospace,monospace}
+  header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+  .brand{display:flex;gap:8px;align-items:center;font-weight:700}
+  .logo{width:26px;height:26px;border-radius:8px;border:1px solid var(--gold2);display:grid;place-items:center;color:var(--gold);font-size:13px}
+  .acct-id{font-size:12px;color:var(--mute);display:flex;align-items:center;gap:6px}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--mute)}
+  .dot.on{background:var(--green);box-shadow:0 0 8px var(--green)}
+  .dot.err{background:var(--red)}
+  nav{display:flex;gap:4px;margin:6px 0 16px}
+  nav button{background:none;border:0;color:var(--mute);padding:6px 12px;border-radius:8px;font-size:13px}
+  nav button.act{background:var(--card2);color:var(--text)}
+  h1{font-size:28px;margin:4px 0 2px}
+  .sub{color:var(--mute);font-size:13px;margin-bottom:16px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px;margin-bottom:14px}
+  .acct{display:flex;align-items:center;gap:12px}
+  .xm{width:42px;height:42px;border-radius:50%;background:#000;border:1px solid #333;display:grid;place-items:center;font-weight:800;font-size:13px}
+  .acct b{display:block}
+  .acct small{color:var(--mute)}
+  .badge{font-size:10px;font-weight:700;padding:2px 7px;border-radius:20px;margin-left:6px;vertical-align:middle}
+  .badge.demo{background:#1d3352;color:#8cb4ff}
+  .badge.real{background:#4a1c1e;color:#ff9b9e}
+  .label{color:var(--mute);font-size:11px;letter-spacing:.1em;text-transform:uppercase;text-align:center}
+  .balance{font-size:38px;font-weight:700;color:var(--gold);text-align:center;margin:2px 0 4px;font-variant-numeric:tabular-nums}
+  .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:10px 0 14px}
+  .stat{background:var(--card2);border-radius:10px;padding:8px;text-align:center}
+  .stat span{display:block;color:var(--mute);font-size:11px}
+  .stat b{font-variant-numeric:tabular-nums}
+  .btns{display:flex;gap:10px;justify-content:center}
+  .btn{border:0;border-radius:12px;padding:12px 22px;font-weight:700;font-size:14px;cursor:pointer}
+  .btn.start{background:linear-gradient(180deg,#d8b45c,#9c7a2e);color:#1a1405}
+  .btn.stop{background:transparent;border:1px solid #5a2326;color:var(--red)}
+  .btn.ghost{background:var(--card2);color:var(--text);padding:9px 14px;font-size:13px}
+  .btn:disabled{opacity:.35}
+  .state{text-align:center;color:var(--mute);font-size:12px;margin-top:10px}
+  .state b{color:var(--text)}
+  .pulse{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--green);margin-right:6px;animation:p 1.4s infinite}
+  @keyframes p{50%{opacity:.25}}
+  .row-h{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px}
+  .row-h h3{margin:0;font-size:15px}
+  .row-h small{color:var(--mute);font-size:11px}
+  table{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums}
+  th{color:var(--mute);font-weight:500;text-align:left;padding:6px 4px;font-size:12px}
+  td{padding:9px 4px;border-top:1px solid var(--line)}
+  td:last-child,th:last-child{text-align:right}
+  .buy{color:var(--blue)} .sell{color:var(--red)}
+  .pos{color:var(--green)} .neg{color:var(--red)}
+  .pill{font-size:11px;padding:2px 8px;border-radius:20px;background:#22324f;color:#8cb4ff}
+  .empty{color:var(--mute);text-align:center;padding:16px;font-size:13px}
+  .log{font:12px/1.5 ui-monospace,Menlo,monospace;max-height:260px;overflow:auto}
+  .log div{padding:2px 0;border-bottom:1px dashed #1f1f22}
+  .log .error{color:var(--red)} .log .warn{color:#f0b35a} .log .ok{color:var(--green)}
+  form .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  label.f{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--mute)}
+  label.f input,label.f select{background:var(--card2);border:1px solid var(--line);color:var(--text);border-radius:10px;padding:10px;font-size:15px;width:100%}
+  label.chk{display:flex;gap:8px;align-items:center;font-size:13px;margin:10px 0}
+  .sect{color:var(--gold);font-size:12px;letter-spacing:.08em;text-transform:uppercase;margin:16px 0 8px}
+  .hint{font-size:12px;color:var(--mute);margin-top:6px}
+  .warnbox{background:#2a1a10;border:1px solid #5a3a1a;color:#f3c58a;border-radius:12px;padding:10px;font-size:12px;margin-bottom:12px}
+  .hide{display:none!important}
+  #toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:#222;border:1px solid #333;padding:10px 16px;border-radius:12px;font-size:13px;opacity:0;transition:.3s;pointer-events:none;max-width:90%}
+  #toast.show{opacity:1}
+  #login{position:fixed;inset:0;background:var(--bg);display:grid;place-items:center;z-index:9}
+  #login .card{width:300px;text-align:center}
+  #login input{width:100%;margin:12px 0;text-align:center;font-size:22px;letter-spacing:.3em;background:var(--card2);border:1px solid var(--line);color:var(--text);border-radius:12px;padding:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand"><div class="logo">⚙</div>mt5-bot</div>
+    <div class="acct-id"><span id="dot" class="dot"></span><span id="hLogin">—</span></div>
+  </header>
+  <nav>
+    <button data-tab="bot" class="act">Bot</button>
+    <button data-tab="perf">Performance</button>
+    <button data-tab="set">Settings</button>
+    <button data-tab="akun">Akun</button>
+    <button data-tab="log">Log</button>
+  </nav>
+
+  <!-- BOT -->
+  <section id="tab-bot">
+    <h1>mt5-bot</h1>
+    <div class="sub">Bot trading otomatis untuk MetaTrader 5 (via MetaApi).</div>
+
+    <div class="card">
+      <div class="label" style="text-align:left;margin-bottom:8px">Trading account</div>
+      <div class="acct">
+        <div class="xm" id="srvIcon">MT5</div>
+        <div><b id="aLogin">—</b><small id="aServer">Menghubungkan…</small></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="label" style="text-align:left">Trading control</div>
+      <div class="label" style="margin-top:10px">Balance</div>
+      <div class="balance" id="bal">—</div>
+      <div class="stats">
+        <div class="stat"><span>Equity</span><b id="eq">—</b></div>
+        <div class="stat"><span>Floating</span><b id="fl">—</b></div>
+        <div class="stat"><span>Hari ini</span><b id="dpl">—</b></div>
+      </div>
+      <div class="btns">
+        <button class="btn start" id="bStart" onclick="act('start')">Start bot</button>
+        <button class="btn stop" id="bStop" onclick="act('stop')">Stop bot</button>
+      </div>
+      <div class="state" id="state">—</div>
+    </div>
+
+    <div class="card">
+      <div class="row-h"><h3>Posisi terbuka <span id="nPos" class="pill">0</span></h3>
+        <button class="btn ghost" onclick="closeAll()">Tutup semua</button></div>
+      <table><thead><tr><th>Simbol</th><th>Lot</th><th>Tipe</th><th>Profit</th></tr></thead>
+        <tbody id="posBody"></tbody></table>
+    </div>
+
+    <div class="card">
+      <div class="row-h"><h3>Live trade history</h3><small id="upd"></small></div>
+      <table><thead><tr><th>Time</th><th>Amount</th><th>Type</th><th>Result</th></tr></thead>
+        <tbody id="histBody"></tbody></table>
+    </div>
+  </section>
+
+  <!-- PERFORMANCE -->
+  <section id="tab-perf" class="hide">
+    <div class="card">
+      <div class="label">Profit / rugi hari ini</div>
+      <div class="balance" id="pPl">—</div>
+      <div class="stats">
+        <div class="stat"><span>Trade selesai</span><b id="pN">—</b></div>
+        <div class="stat"><span>Win rate</span><b id="pWr">—</b></div>
+        <div class="stat"><span>Drawdown</span><b id="pDd">—</b></div>
+      </div>
+      <div class="stats">
+        <div class="stat"><span>Margin</span><b id="pM">—</b></div>
+        <div class="stat"><span>Free margin</span><b id="pFm">—</b></div>
+        <div class="stat"><span>Margin level</span><b id="pMl">—</b></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="row-h"><h3>Indikator terakhir</h3></div>
+      <table><tbody id="indBody"></tbody></table>
+    </div>
+  </section>
+
+  <!-- SETTINGS -->
+  <section id="tab-set" class="hide">
+    <div class="warnbox">Uji dulu minimal beberapa minggu di akun <b>demo</b>. Tidak ada strategi yang menjamin profit — mulai dari risiko kecil (0.5–1% per sinyal).</div>
+    <form id="sForm" class="card" onsubmit="saveSettings(event)">
+      <div class="sect" style="margin-top:0">Market</div>
+      <div class="grid">
+        <label class="f">Simbol<input name="symbol"></label>
+        <label class="f">Timeframe<select name="timeframe">
+          <option>M1</option><option>M5</option><option>M15</option><option>M30</option><option>H1</option><option>H4</option></select></label>
+      </div>
+
+      <div class="sect">Risiko</div>
+      <div class="grid">
+        <label class="f">Mode lot<select name="risk_mode" onchange="toggleRisk()">
+          <option value="percent">% Risiko (otomatis)</option><option value="fixed">Lot tetap</option></select></label>
+        <label class="f" id="fRisk">Risiko per sinyal (%)<input name="risk_percent" type="number" step="0.1" min="0.1" max="20"></label>
+        <label class="f hide" id="fLot">Lot per posisi<input name="fixed_lot" type="number" step="0.01" min="0.01"></label>
+        <label class="f">Posisi per sinyal<input name="positions_per_signal" type="number" min="1" max="50"></label>
+        <label class="f">Maks posisi terbuka<input name="max_open_positions" type="number" min="1"></label>
+        <label class="f">Maks rugi harian (%)<input name="max_daily_loss_percent" type="number" step="0.5"></label>
+        <label class="f">Maks drawdown (%)<input name="max_drawdown_percent" type="number" step="1"></label>
+        <label class="f">Maks spread (point)<input name="max_spread_points" type="number"></label>
+      </div>
+      <div class="hint">Mode % : lot dihitung otomatis supaya total kerugian semua posisi saat kena SL ≈ % balance yang diatur.</div>
+
+      <div class="sect">Stop loss / Take profit (kelipatan ATR)</div>
+      <div class="grid">
+        <label class="f">SL × ATR<input name="sl_atr_mult" type="number" step="0.1" min="0.1"></label>
+        <label class="f">TP × ATR (0=tanpa)<input name="tp_atr_mult" type="number" step="0.1" min="0"></label>
+        <label class="f">Breakeven × ATR (0=mati)<input name="breakeven_atr" type="number" step="0.1" min="0"></label>
+        <label class="f">Trailing × ATR (0=mati)<input name="trailing_atr" type="number" step="0.1" min="0"></label>
+      </div>
+      <label class="chk"><input type="checkbox" name="close_on_opposite"> Tutup posisi saat sinyal berlawanan</label>
+
+      <div class="sect">Strategi (EMA + RSI)</div>
+      <div class="grid">
+        <label class="f">EMA cepat<input name="ema_fast" type="number" min="2"></label>
+        <label class="f">EMA lambat<input name="ema_slow" type="number" min="3"></label>
+        <label class="f">EMA tren<input name="ema_trend" type="number" min="5"></label>
+        <label class="f">RSI overbought<input name="rsi_overbought" type="number"></label>
+        <label class="f">RSI oversold<input name="rsi_oversold" type="number"></label>
+      </div>
+
+      <div class="sect">Jam trading (UTC)</div>
+      <div class="grid">
+        <label class="f">Mulai<input name="session_start" type="time"></label>
+        <label class="f">Selesai<input name="session_end" type="time"></label>
+      </div>
+
+      <div class="sect">Akun real</div>
+      <label class="chk"><input type="checkbox" name="allow_real_account"> Izinkan bot trading di akun REAL (uang asli)</label>
+
+      <button class="btn start" style="width:100%;margin-top:10px">Simpan pengaturan</button>
+    </form>
+  </section>
+
+  <!-- AKUN -->
+  <section id="tab-akun" class="hide">
+    <div class="card">
+      <div class="sect" style="margin-top:0">Koneksi MetaApi</div>
+      <label class="f">Account ID MetaApi<input id="cAcc" autocomplete="off" placeholder="mis. 865d3a4d-3803-…"></label>
+      <div style="height:10px"></div>
+      <label class="f">API token<textarea id="cTok" autocomplete="off" placeholder="Tempel token dari menu API access"></textarea></label>
+      <div class="hint" id="tokHint"></div>
+      <button class="btn start" style="width:100%;margin-top:12px" onclick="saveCreds()">Simpan &amp; hubungkan</button>
+      <div class="hint" style="margin-top:12px">Cara dapat: daftar di app.metaapi.cloud → <b>Accounts → Add account</b> (isi login, password, server MT5) → salin Account ID. Token ada di menu <b>API access</b>.</div>
+    </div>
+    <div class="card">
+      <div class="sect" style="margin-top:0">Agar bot tidak dimatikan HP</div>
+      <div class="hint" id="batHint" style="margin-bottom:10px"></div>
+      <button class="btn ghost" onclick="Bot.batteryExemption()">Matikan optimasi baterai</button>
+      <div class="hint" style="margin-top:10px">Biarkan HP tersambung internet & sebaiknya sambil dicas. Merek seperti Xiaomi/Oppo/Vivo juga perlu: Pengaturan → Aplikasi → mt5-bot → <b>Mulai otomatis: aktif</b>, Penghemat baterai: <b>Tanpa batasan</b>.</div>
+    </div>
+  </section>
+
+  <!-- LOG -->
+  <section id="tab-log" class="hide">
+    <div class="card"><div class="row-h"><h3>Aktivitas bot</h3></div><div class="log" id="log"></div></div>
+  </section>
+</div>
+<div id="toast"></div>
+
+<script>
+// ---- mock untuk dicoba di browser (di aplikasi Android, window.Bot disediakan oleh Kotlin) ----
+if (!window.Bot) {
+  let run=false, t0=Date.now();
+  window.Bot = {
+    status(){ const pl=Math.sin((Date.now()-t0)/5000)*40; return JSON.stringify({connected:true,running:run,state:run?"Running":"Stopped",mode:"metaapi",
+      account:{login:198319734,server:"XMGlobal-MT5 2",currency:"USD",balance:10061.05,equity:10061.05+pl,margin:120,free_margin:9900,margin_level:8300,leverage:500,is_demo:true},
+      today:{pl:61.05+pl,pl_pct:0.6,drawdown_pct:0.4,closed:5,wins:5,realized:61.05},floating:pl,
+      positions:run?[{ticket:"1",symbol:"XAUUSD",side:"buy",volume:0.37,profit:pl,time:new Date().toISOString()}]:[],
+      history:[{ticket:"9",symbol:"XAUUSD",side:"sell",volume:0.43,profit:51.6,time:new Date().toISOString()},{ticket:"8",symbol:"XAUUSD",side:"sell",volume:0.49,profit:-39.2,time:new Date().toISOString()}],
+      indicators:{ema_fast:2650.1,ema_slow:2649.8,ema_trend:2645.2,rsi:56.2,atr:1.2},updated:new Date().toISOString(),
+      settings:{symbol:"XAUUSD",timeframe:"M1",risk_mode:"percent",risk_percent:1,fixed_lot:0.01,positions_per_signal:1,max_open_positions:15,sl_atr_mult:1.5,tp_atr_mult:2,breakeven_atr:1,trailing_atr:1,close_on_opposite:true,max_daily_loss_percent:5,max_drawdown_percent:20,max_spread_points:60,session_start:"00:00",session_end:"23:59",allow_real_account:false,ema_fast:9,ema_slow:21,ema_trend:50,rsi_overbought:70,rsi_oversold:30},
+      account_id:"865d3a4d-demo",has_token:true,battery_ok:false,logs:[{t:"12:00:01",level:"ok",msg:"Bot dimulai: XAUUSD M1"}]}); },
+    start(){run=true}, stop(){run=false}, closeAll(){}, saveSettings(){return ""}, saveCredentials(){}, batteryExemption(){alert("battery")}
+  };
+}
+
+let formLoaded = false, credsLoaded = false;
+const $ = id => document.getElementById(id);
+const fmt = (n, d=2) => n==null||isNaN(n) ? "—" : Number(n).toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d});
+const sgn = n => (n>0?"+":"") + fmt(n);
+const cls = n => n>0?"pos":n<0?"neg":"";
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const tm = iso => { const d=new Date(iso); if(isNaN(d)) return "—"; return d.toLocaleDateString("en-GB",{day:"2-digit",month:"short"})+" "+d.toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"}); };
+function toast(m){ const t=$("toast"); t.textContent=m; t.classList.add("show"); clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove("show"),2500); }
+
+function act(a){
+  if (a==="start") { Bot.start(); toast("Memulai bot…"); }
+  else if (a==="stop") { Bot.stop(); toast("Bot dihentikan"); }
+  setTimeout(refresh,600);
+}
+function closeAll(){ if(confirm("Tutup SEMUA posisi bot sekarang?")) { Bot.closeAll(); toast("Menutup posisi…"); } }
+
+document.querySelectorAll("nav button").forEach(b=>b.onclick=()=>{
+  document.querySelectorAll("nav button").forEach(x=>x.classList.toggle("act",x===b));
+  ["bot","perf","set","akun","log"].forEach(t=>$("tab-"+t).classList.toggle("hide",t!==b.dataset.tab));
+  window.scrollTo(0,0);
+});
+
+function toggleRisk(){
+  const f=$("sForm"), pct=f.risk_mode.value==="percent";
+  $("fRisk").classList.toggle("hide",!pct); $("fLot").classList.toggle("hide",pct);
+}
+function fillForm(s){
+  const f=$("sForm");
+  for (const [k,v] of Object.entries(s)){ const el=f.elements[k]; if(!el) continue; if(el.type==="checkbox") el.checked=!!v; else el.value=v; }
+  toggleRisk(); formLoaded=true;
+}
+function saveSettings(e){
+  e.preventDefault();
+  const f=$("sForm"), body={};
+  for (const el of f.elements){ if(!el.name) continue; body[el.name]= el.type==="checkbox"?el.checked:el.value; }
+  if (body.allow_real_account && !confirm("Yakin mengizinkan bot trading dengan UANG ASLI?")) return;
+  const err = Bot.saveSettings(JSON.stringify(body));
+  toast(err || "Pengaturan disimpan");
+}
+function saveCreds(){
+  const acc=$("cAcc").value.trim(), tok=$("cTok").value.trim();
+  if(!acc){ toast("Account ID wajib diisi"); return; }
+  Bot.saveCredentials(tok, acc); $("cTok").value=""; toast("Menghubungkan…");
+  setTimeout(refresh,1500);
+}
+
+function render(s){
+  $("dot").className="dot "+(s.connected?"on":"err");
+  if(!formLoaded && s.settings) fillForm(s.settings);
+  if(!credsLoaded){ $("cAcc").value=s.account_id||""; credsLoaded=true; }
+  $("tokHint").textContent = s.has_token ? "Token sudah tersimpan. Kosongkan bila tidak ingin mengganti." : "Token belum diisi.";
+  $("batHint").innerHTML = s.battery_ok ? '<span class="pos">✓ Optimasi baterai sudah dimatikan untuk aplikasi ini.</span>' : '<span class="neg">Optimasi baterai masih aktif — bot bisa dihentikan Android saat layar mati.</span>';
+  const a=s.account;
+  if(a){
+    $("hLogin").textContent=a.login;
+    $("aLogin").innerHTML=esc(a.login)+` <span class="badge ${a.is_demo?"demo":"real"}">${a.is_demo?"DEMO":"REAL"}</span>`;
+    $("aServer").textContent=a.server+" · 1:"+a.leverage;
+    $("bal").textContent=fmt(a.balance);
+    $("eq").textContent=fmt(a.equity);
+    $("fl").innerHTML=`<span class="${cls(s.floating)}">${sgn(s.floating)}</span>`;
+    $("dpl").innerHTML=`<span class="${cls(s.today.pl)}">${sgn(s.today.pl)}</span>`;
+    $("pPl").innerHTML=`<span class="${cls(s.today.pl)}">${sgn(s.today.pl)} ${esc(a.currency)}</span>`;
+    $("pN").textContent=s.today.closed;
+    $("pWr").textContent=s.today.closed?Math.round(s.today.wins/s.today.closed*100)+"%":"—";
+    $("pDd").textContent=fmt(s.today.drawdown_pct,1)+"%";
+    $("pM").textContent=fmt(a.margin); $("pFm").textContent=fmt(a.free_margin);
+    $("pMl").textContent=a.margin_level?fmt(a.margin_level,0)+"%":"—";
+  } else {
+    $("aServer").textContent = s.connected ? "Memuat…" : "Belum terhubung — isi tab Akun";
+  }
+  $("bStart").disabled=s.running||!s.connected; $("bStop").disabled=!s.running;
+  $("state").innerHTML=(s.running?'<span class="pulse"></span>':"")+"Status: <b>"+esc(s.state)+"</b>"+(s.settings?` · ${esc(s.settings.symbol)} ${s.settings.timeframe}`:"");
+
+  const P=s.positions||[];
+  $("nPos").textContent=P.length;
+  $("posBody").innerHTML=P.length?P.map(p=>`<tr><td>${esc(p.symbol)}</td><td>${p.volume}</td><td class="${p.side}">${p.side==="buy"?"Buy":"Sell"}</td><td class="${cls(p.profit)}">${sgn(p.profit)}</td></tr>`).join(""):`<tr><td colspan="4" class="empty">Tidak ada posisi</td></tr>`;
+
+  const H=s.history||[];
+  const rows=P.map(p=>`<tr><td>${tm(p.time)}</td><td>${p.volume}</td><td class="${p.side}">${p.side==="buy"?"Buy":"Sell"}</td><td><span class="pill">open</span></td></tr>`)
+    .concat(H.map(h=>`<tr><td>${tm(h.time)}</td><td>${h.volume}</td><td class="${h.side}">${h.side==="buy"?"Buy":"Sell"}</td><td class="${cls(h.profit)}">${sgn(h.profit)}</td></tr>`));
+  $("histBody").innerHTML=rows.length?rows.join(""):`<tr><td colspan="4" class="empty">Belum ada trade hari ini</td></tr>`;
+  if(s.updated) $("upd").textContent="Updated "+tm(s.updated);
+
+  const I=s.indicators||{};
+  $("indBody").innerHTML=Object.keys(I).length?Object.entries(I).map(([k,v])=>`<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join(""):`<tr><td class="empty">Menunggu candle baru…</td></tr>`;
+
+  $("log").innerHTML=(s.logs||[]).map(l=>`<div class="${l.level}">${l.t} ${esc(l.msg)}</div>`).join("");
+}
+
+function refresh(){ try{ render(JSON.parse(Bot.status())); }catch(e){ console.log(e); } }
+refresh(); setInterval(refresh,2000);
+</script>
+</body>
+</html>
