@@ -20,7 +20,7 @@ import kotlin.math.roundToLong
 data class Pos(
     val id: String, val symbol: String, val buy: Boolean, val volume: Double,
     val open: Double, val current: Double, val sl: Double, val tp: Double,
-    val profit: Double, val time: String
+    val profit: Double, val time: String, val comment: String = ""
 )
 
 /**
@@ -244,7 +244,8 @@ object Engine {
         sl = o.optDouble("stopLoss", 0.0).let { if (it.isNaN()) 0.0 else it },
         tp = o.optDouble("takeProfit", 0.0).let { if (it.isNaN()) 0.0 else it },
         profit = o.optDouble("profit", 0.0) + o.optDouble("swap", 0.0) + o.optDouble("commission", 0.0),
-        time = o.optString("time")
+        time = o.optString("time"),
+        comment = o.optString("comment")
     )
 
     private fun fmtPrice(v: Double, digits: Int) = "%.${digits}f".format(v)
@@ -458,7 +459,7 @@ object Engine {
                     mine = mine.filter { it.buy == buy }
                 }
             }
-            if (mine.isNotEmpty() && !cfg.getBoolean("allow_stacking")) continue
+            if (mine.isNotEmpty() && (cfg.getBoolean("layering") || !cfg.getBoolean("allow_stacking"))) continue
             if (mine.any { it.buy != buy }) continue  // jangan buka arah berlawanan di pair yang sama
 
             val pairsOpen = open.map { it.symbol }.filter { it != sym }.toSet().size
@@ -495,13 +496,17 @@ object Engine {
         val point = sp.optDouble("point", sp.optDouble("tickSize", 0.00001))
         val digits = sp.optInt("digits", 5)
         val spread = ((ask - bid) / point).roundToLong()
-        if (spread > cfg.getInt("max_spread_points")) {
+        val maxSpread = cfg.getInt("max_spread_points")
+        if (maxSpread > 0 && spread > maxSpread) {
             log("$sym ${side.uppercase()} dilewati: spread $spread > ${cfg.getInt("max_spread_points")} point", "warn")
             return 0
         }
 
         val minDist = (sp.optInt("stopsLevel", 0) + 2) * point
-        val slDist = max(sig.atr * cfg.getDouble("sl_atr_mult"), minDist)
+        val layering = cfg.getBoolean("layering")
+        // Dengan layering, SL ditaruh di luar layer terakhir supaya semua layer sempat terbuka
+        val extra = if (layering) sig.atr * cfg.getDouble("layer_step_atr") * (cfg.getInt("max_layers") - 1) else 0.0
+        val slDist = max(sig.atr * cfg.getDouble("sl_atr_mult") + extra, minDist)
         val tpMult = cfg.getDouble("tp_atr_mult")
         val tpDist = if (tpMult > 0) max(sig.atr * tpMult, minDist) else 0.0
 
@@ -535,7 +540,7 @@ object Engine {
                 .put("symbol", sym)
                 .put("volume", lot)
                 .put("stopLoss", sl)
-                .put("comment", "mt5bot ${i + 1}/$n")
+                .put("comment", if (layering) "mt5bot L1 ${i + 1}/$n" else "mt5bot ${i + 1}/$n")
                 .put("magic", cfg.getLong("magic"))
             if (tp > 0) body.put("takeProfit", tp)
             try {
@@ -564,6 +569,10 @@ object Engine {
     }
 
     private fun manage(a: MetaApi, positions: List<Pos>) {
+        if (cfg.getBoolean("layering")) {
+            layers(a, positions)
+            return
+        }
         val be = cfg.getDouble("breakeven_atr")
         val tr = cfg.getDouble("trailing_atr")
         if (be <= 0 && tr <= 0) return
@@ -598,6 +607,102 @@ object Engine {
                 log("${p.symbol} #${p.id}: ${e.message}", "warn")
             }
         }
+    }
+
+    // ------------------------------------------------------------------ layering
+    private fun layerOf(p: Pos): Int =
+        Regex("L(\\d+)").find(p.comment)?.groupValues?.get(1)?.toIntOrNull() ?: 1
+
+    /**
+     * Layering: bila harga bergerak melawan posisi sejauh (jarak layer × ATR) dari layer
+     * terakhir, buka layer baru. Setelah itu TP semua posisi di pair tsb digeser ke
+     * harga rata-rata ± TP, sehingga pantulan kecil sudah cukup untuk menutup semuanya profit.
+     */
+    private fun layers(a: MetaApi, positions: List<Pos>) {
+        if (!running || noMoney) return
+        val maxLayers = cfg.getInt("max_layers")
+        for ((sym, list) in positions.groupBy { it.symbol }) {
+            val atr = atrMap[sym] ?: continue
+            if (atr <= 0 || list.isEmpty()) continue
+            val buy = list[0].buy
+            if (list.any { it.buy != buy }) continue
+            val layer = list.maxOf { layerOf(it) }
+            if (layer >= maxLayers) continue
+            val worstEntry = if (buy) list.minOf { it.open } else list.maxOf { it.open }
+            val current = list[0].current
+            val adverse = if (buy) worstEntry - current else current - worstEntry
+            val step = atr * cfg.getDouble("layer_step_atr")
+            if (adverse < step) continue
+
+            val room = cfg.getInt("max_open_positions") - positions.size
+            val n = min(cfg.getInt("positions_per_signal"), room)
+            if (n <= 0) continue
+            val sp = try { spec(a, sym) } catch (e: ApiException) { continue }
+            val digits = sp.optInt("digits", 5)
+            val vMin = sp.optDouble("minVolume", 0.01)
+            val vMax = sp.optDouble("maxVolume", 100.0)
+            val vStep = sp.optDouble("volumeStep", 0.01)
+            val baseLot = list.filter { layerOf(it) == layer }.minOf { it.volume }
+            val lot = Strategy.normLot(
+                max(vMin, min(baseLot * cfg.getDouble("layer_multiplier"), vMax)) + 1e-9, vStep
+            )
+            val sl = list.firstOrNull { it.sl > 0 }?.sl ?: 0.0
+            val newLayer = layer + 1
+            var opened = 0
+            for (i in 0 until n) {
+                val body = JSONObject()
+                    .put("actionType", if (buy) "ORDER_TYPE_BUY" else "ORDER_TYPE_SELL")
+                    .put("symbol", sym)
+                    .put("volume", lot)
+                    .put("comment", "mt5bot L$newLayer ${i + 1}/$n")
+                    .put("magic", cfg.getLong("magic"))
+                if (sl > 0) body.put("stopLoss", sl)
+                try {
+                    a.trade(body)
+                    opened++
+                } catch (e: Exception) {
+                    val msg = e.message ?: "Order gagal"
+                    log("$sym layer $newLayer: $msg", "error")
+                    if (msg.contains("NO_MONEY")) noMoney = true
+                    break
+                }
+            }
+            if (opened == 0) continue
+            val m = "$sym layer $newLayer: ${if (buy) "BUY" else "SELL"} ${opened}x $lot lot"
+            log(m, "ok")
+            alert(m)
+            lastDealsAt = 0
+            retarget(a, sym, buy, atr, digits)
+        }
+    }
+
+    /** Geser TP semua posisi pair ke harga rata-rata ± (TP × ATR). */
+    private fun retarget(a: MetaApi, sym: String, buy: Boolean, atr: Double, digits: Int) {
+        val magic = cfg.getLong("magic")
+        val raw = a.positions()
+        val list = (0 until raw.length()).map { raw.getJSONObject(it) }
+            .filter { it.optLong("magic") == magic && it.optString("symbol") == sym }
+            .map { parsePos(it) }
+        val vol = list.sumOf { it.volume }
+        if (vol <= 0) return
+        val avg = list.sumOf { it.open * it.volume } / vol
+        val tpDist = atr * cfg.getDouble("tp_atr_mult")
+        if (tpDist <= 0) return
+        val tp = Strategy.round(if (buy) avg + tpDist else avg - tpDist, digits)
+        var ok = 0
+        for (p in list) {
+            if (p.tp == tp) continue
+            try {
+                val body = JSONObject().put("actionType", "POSITION_MODIFY")
+                    .put("positionId", p.id).put("takeProfit", tp)
+                if (p.sl > 0) body.put("stopLoss", p.sl)
+                a.trade(body)
+                ok++
+            } catch (e: Exception) {
+                log("$sym #${p.id} ubah TP: ${e.message}", "warn")
+            }
+        }
+        if (ok > 0) log("$sym: TP ${list.size} posisi digeser ke ${fmtPrice(tp, digits)} (rata-rata ${fmtPrice(avg, digits)})")
     }
 
     private fun publish(acc: JSONObject, positions: List<Pos>, dayPl: Double, dayPlPct: Double, ddPct: Double) {

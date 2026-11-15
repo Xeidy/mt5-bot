@@ -195,7 +195,7 @@
         <label class="f">Maks posisi terbuka<input name="max_open_positions" type="number" min="1"></label>
         <label class="f">Maks rugi harian (%)<input name="max_daily_loss_percent" type="number" step="0.5"></label>
         <label class="f">Maks drawdown (%)<input name="max_drawdown_percent" type="number" step="1"></label>
-        <label class="f">Maks spread (point)<input name="max_spread_points" type="number"></label>
+        <label class="f">Maks spread (point, 0 = tanpa batas)<input name="max_spread_points" type="number" min="0"></label>
       </div>
       <div class="hint">Mode % : lot dihitung otomatis supaya total kerugian semua posisi saat kena SL ≈ % balance yang diatur.</div>
 
@@ -208,6 +208,15 @@
       </div>
       <label class="chk"><input type="checkbox" name="close_on_opposite"> Tutup posisi saat sinyal berlawanan</label>
       <label class="chk"><input type="checkbox" name="allow_stacking"> Tambah posisi terus walau sudah ada posisi searah (stacking)</label>
+
+      <div class="sect">Layering</div>
+      <label class="chk"><input type="checkbox" name="layering"> Aktifkan layering (tambah layer saat harga berbalik, TP ke harga rata-rata)</label>
+      <div class="grid">
+        <label class="f">Jarak layer × ATR<input name="layer_step_atr" type="number" step="0.1" min="0.1"></label>
+        <label class="f">Maks layer per pair<input name="max_layers" type="number" min="1" max="20"></label>
+        <label class="f">Pengali lot layer<input name="layer_multiplier" type="number" step="0.1" min="1" max="3"></label>
+      </div>
+      <div class="hint">Contoh: jarak 0.5 → tiap harga melawan 0.5 ATR dari layer terakhir, bot buka layer baru. Pengali 1.0 = lot sama; 1.5 = lot naik 50% tiap layer (lebih cepat TP, tapi rugi jauh lebih besar bila SL kena). SL semua layer ditaruh di luar layer terakhir.</div>
 
       <div class="sect">Strategi</div>
       <div class="grid">
@@ -271,7 +280,7 @@ if (!window.Bot) {
       positions:run?[{ticket:"1",symbol:"XAUUSD",side:"buy",volume:0.37,profit:pl,time:new Date().toISOString()}]:[],
       history:[{ticket:"9",symbol:"XAUUSD",side:"sell",volume:0.43,profit:51.6,time:new Date().toISOString()},{ticket:"8",symbol:"XAUUSD",side:"sell",volume:0.49,profit:-39.2,time:new Date().toISOString()}],
       indicators:{EURUSDm:"RSI 55.2 · ATR 0.00031",XAUUSDm:"RSI 61.0 · ATR 1.2 · BUY"},updated:new Date().toISOString(),
-      settings:{symbols:"ALL",max_symbols_open:3,strategy:"ema_rsi",allow_stacking:false,timeframe:"M1",risk_mode:"percent",risk_percent:1,fixed_lot:0.01,positions_per_signal:1,max_open_positions:15,sl_atr_mult:1.5,tp_atr_mult:2,breakeven_atr:1,trailing_atr:1,close_on_opposite:true,max_daily_loss_percent:5,max_drawdown_percent:20,max_spread_points:60,session_start:"00:00",session_end:"23:59",allow_real_account:false,ema_fast:9,ema_slow:21,ema_trend:50,rsi_overbought:70,rsi_oversold:30},
+      settings:{symbols:"ALL",max_symbols_open:3,strategy:"ema_rsi",allow_stacking:false,layering:false,layer_step_atr:0.5,max_layers:5,layer_multiplier:1,timeframe:"M1",risk_mode:"percent",risk_percent:1,fixed_lot:0.01,positions_per_signal:1,max_open_positions:15,sl_atr_mult:1.5,tp_atr_mult:2,breakeven_atr:1,trailing_atr:1,close_on_opposite:true,max_daily_loss_percent:5,max_drawdown_percent:20,max_spread_points:60,session_start:"00:00",session_end:"23:59",allow_real_account:false,ema_fast:9,ema_slow:21,ema_trend:50,rsi_overbought:70,rsi_oversold:30},
       symbols:["EURUSDm","GBPUSDm","XAUUSDm"],notice:run?"":"Ini akun REAL. Centang Izinkan…",account_id:"865d3a4d-demo",has_token:true,battery_ok:false,logs:[{t:"12:00:01",level:"ok",msg:"Bot dimulai: XAUUSD M1"}]}); },
     start(){run=true}, stop(){run=false}, closeAll(){}, saveSettings(){return ""}, saveCredentials(){}, batteryExemption(){alert("battery")}
   };
@@ -318,17 +327,18 @@ function saveSettings(e){
 }
 function setSyms(v){ $("fSyms").value=v; }
 const PRESETS = {
-  aggr: {strategy:"scalp", symbols:"ALL", timeframe:"M1", risk_mode:"fixed", fixed_lot:0.01,
-         positions_per_signal:5, max_open_positions:40, max_symbols_open:8, allow_stacking:true,
+  aggr: {strategy:"scalp", timeframe:"M1", risk_mode:"fixed", fixed_lot:0.01,
+         positions_per_signal:3, max_open_positions:40, max_symbols_open:8, allow_stacking:false,
+         layering:true, layer_step_atr:0.5, max_layers:5, layer_multiplier:1.0,
          tp_atr_mult:0.4, sl_atr_mult:2, breakeven_atr:0, trailing_atr:0, close_on_opposite:false,
-         max_spread_points:300, max_daily_loss_percent:30, max_drawdown_percent:50, ema_fast:9},
+         max_spread_points:0, max_daily_loss_percent:30, max_drawdown_percent:50, ema_fast:9},
   normal: {strategy:"ema_rsi", risk_mode:"percent", risk_percent:1, positions_per_signal:1,
-         max_open_positions:15, max_symbols_open:3, allow_stacking:false, tp_atr_mult:2,
+         max_open_positions:15, max_symbols_open:3, allow_stacking:false, layering:false, tp_atr_mult:2,
          sl_atr_mult:1.5, breakeven_atr:1, trailing_atr:1, close_on_opposite:true,
          max_spread_points:60, max_daily_loss_percent:5, max_drawdown_percent:20}
 };
 function preset(k){
-  if(k==="aggr" && !confirm("Mode agresif: entry hampir tiap candle, banyak posisi, TP kecil, SL lebih jauh dari TP. Satu kali kena SL bisa menghapus banyak profit. Lanjut isi formulir?")) return;
+  if(k==="aggr" && !confirm("Mode agresif + layering: entry hampir tiap candle, layer ditambah saat harga berbalik, TP kecil dari harga rata-rata. Bila harga terus melawan sampai SL, SEMUA layer rugi bersamaan. Lanjut isi formulir?")) return;
   const f=$("sForm");
   for (const [n,v] of Object.entries(PRESETS[k])){ const el=f.elements[n]; if(!el) continue; if(el.type==="checkbox") el.checked=v; else el.value=v; }
   toggleRisk(); toast("Preset diisi — tekan Simpan pengaturan");

@@ -10,6 +10,10 @@ object Settings {
         .put("symbols", "XAUUSD")
         .put("strategy", "ema_rsi")
         .put("allow_stacking", false)
+        .put("layering", false)
+        .put("layer_step_atr", 0.5)
+        .put("max_layers", 5)
+        .put("layer_multiplier", 1.0)
         .put("timeframe", "M1")
         .put("risk_mode", "percent")
         .put("risk_percent", 1.0)
@@ -98,6 +102,11 @@ object Settings {
         val pps = cur.getInt("positions_per_signal")
         if (pps < 1 || pps > 50) return "Posisi per sinyal harus 1–50"
         if (cur.getInt("max_open_positions") > 200) return "Maks posisi terbuka maksimal 200"
+        if (cur.getDouble("layer_step_atr") <= 0) return "Jarak layer harus > 0"
+        if (cur.getInt("max_layers") < 1 || cur.getInt("max_layers") > 20) return "Maks layer harus 1–20"
+        val mult = cur.getDouble("layer_multiplier")
+        if (mult < 1.0 || mult > 3.0) return "Pengali lot layer harus 1.0–3.0"
+        if (cur.getInt("max_spread_points") < 0) return "Maks spread tidak boleh negatif (0 = tanpa batas)"
         if (cur.getInt("max_open_positions") < 1) return "Maks posisi minimal 1"
         if (cur.getDouble("sl_atr_mult") <= 0) return "SL harus > 0 (bot selalu memakai stop loss)"
         if (cur.getDouble("tp_atr_mult") < 0) return "TP tidak boleh negatif"
