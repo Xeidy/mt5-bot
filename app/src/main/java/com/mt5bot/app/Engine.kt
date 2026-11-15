@@ -64,6 +64,8 @@ object Engine {
     private var lastDealsAt = 0L
     private var lastPosCount = -1
     private var noMoney = false
+    /** order pending milik bot per pair (strategi limit), untuk OCO & pembatalan */
+    private val pending = HashMap<String, MutableList<String>>()
 
     private val ISO = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'").withZone(ZoneOffset.UTC)
 
@@ -190,6 +192,7 @@ object Engine {
     }
 
     private fun stopBot(msg: String) {
+        api?.let { a -> for (sym in pending.keys.toList()) cancelPending(a, sym) }
         running = false
         Settings.prefs(ctx).edit().putBoolean("running", false).apply()
         ctx.stopService(Intent(ctx, BotService::class.java))
@@ -389,6 +392,7 @@ object Engine {
 
     private fun closeAll(why: String): Int {
         val a = api ?: return 0
+        for (sym in pending.keys.toList()) cancelPending(a, sym)
         val magic = cfg.getLong("magic")
         val raw = a.positions()
         var n = 0
@@ -426,6 +430,13 @@ object Engine {
                     .sortedBy { it.time }
                     .distinctBy { it.time }
                     .filter { it.time + tfSec <= nowSec }
+                if (cfg.getString("strategy") == "limit") {
+                    val la = Strategy.atr(closed)
+                    atrMap[sym] = la
+                    infoMap[sym] = "ATR ${Strategy.round(la, 5)}"
+                    if (!first) placeLimits(a, acc, sym, closed, la, positions)
+                    continue
+                }
                 val sig = Strategy.signal(closed, cfg)
                 atrMap[sym] = sig.atr
                 val sideTxt = sig.side?.let { " · ${it.uppercase()}" } ?: ""
@@ -572,6 +583,7 @@ object Engine {
     }
 
     private fun manage(a: MetaApi, positions: List<Pos>) {
+        if (pending.isNotEmpty()) oco(a, positions)
         if (cfg.getBoolean("layering")) {
             layers(a, positions)
             return
@@ -708,6 +720,108 @@ object Engine {
             }
         }
         if (ok > 0) log("$sym: TP ${list.size} posisi digeser ke ${fmtPrice(tp, digits)} (rata-rata ${fmtPrice(avg, digits)})")
+    }
+
+    // ------------------------------------------------------------------ limit OCO
+    private fun cancelPending(a: MetaApi, sym: String) {
+        val ids = pending.remove(sym) ?: return
+        for (id in ids) {
+            try {
+                a.trade(JSONObject().put("actionType", "ORDER_CANCEL").put("orderId", id))
+            } catch (_: Exception) {
+                // sudah terisi / sudah batal: abaikan
+            }
+        }
+    }
+
+    /** Bila salah satu limit sudah terisi jadi posisi, batalkan limit pasangannya. */
+    private fun oco(a: MetaApi, positions: List<Pos>) {
+        val filled = positions.map { it.symbol }.toSet()
+        for (sym in pending.keys.toList()) {
+            if (sym in filled) {
+                cancelPending(a, sym)
+                log("$sym: limit terisi, order pasangannya dibatalkan")
+            }
+        }
+    }
+
+    /**
+     * Strategi Limit OCO: tiap candle baru, pasang Buy Limit di (close − jarak×ATR)
+     * dan Sell Limit di (close + jarak×ATR), masing-masing dengan TP & SL dekat.
+     * Order yang belum terisi dibatalkan saat candle berikutnya.
+     */
+    private fun placeLimits(a: MetaApi, acc: JSONObject, sym: String, closed: List<Candle>,
+                            atr: Double, positions: List<Pos>) {
+        cancelPending(a, sym)
+        if (atr <= 0 || closed.isEmpty() || noMoney) return
+        if (positions.any { it.symbol == sym }) return
+        val pairsOpen = positions.map { it.symbol }.toSet().size
+        if (pairsOpen >= cfg.getInt("max_symbols_open")) return
+        if (positions.size >= cfg.getInt("max_open_positions")) return
+
+        val sp = spec(a, sym)
+        val price = a.price(sym)
+        val bid = price.getDouble("bid")
+        val ask = price.getDouble("ask")
+        val point = sp.optDouble("point", 0.00001)
+        val digits = sp.optInt("digits", 5)
+        val spread = ((ask - bid) / point).roundToLong()
+        val maxSpread = cfg.getInt("max_spread_points")
+        if (maxSpread > 0 && spread > maxSpread) {
+            log("$sym limit dilewati: spread $spread > $maxSpread point", "warn")
+            return
+        }
+        val c = closed.last().close
+        val minDist = (sp.optInt("stopsLevel", 0) + 2) * point
+        val dist = atr * cfg.getDouble("limit_dist_atr")
+        val tpD = max(atr * cfg.getDouble("limit_tp_atr"), minDist)
+        val slD = max(atr * cfg.getDouble("limit_sl_atr"), minDist)
+
+        val tickSize = sp.optDouble("tickSize", point).let { if (it > 0) it else point }
+        val tickValue = price.optDouble("lossTickValue", 0.0)
+        val vMin = sp.optDouble("minVolume", 0.01)
+        val vMax = sp.optDouble("maxVolume", 100.0)
+        val vStep = sp.optDouble("volumeStep", 0.01)
+        val lot = if (cfg.getString("risk_mode") == "percent") {
+            val riskMoney = acc.optDouble("balance") * cfg.getDouble("risk_percent") / 100
+            Strategy.lotForRisk(riskMoney, slD, tickSize, tickValue, vMin, vMax, vStep)
+        } else {
+            Strategy.normLot(max(vMin, min(cfg.getDouble("fixed_lot"), vMax)), vStep)
+        }
+        if (lot <= 0) {
+            log("$sym limit dilewati: risiko ${cfg.getDouble("risk_percent")}% terlalu kecil untuk lot minimum $vMin", "warn")
+            return
+        }
+
+        val ids = ArrayList<String>()
+        val placed = ArrayList<String>()
+        for (buy in listOf(true, false)) {
+            val lvl = Strategy.round(if (buy) c - dist else c + dist, digits)
+            // limit harus di sisi yang benar dari harga sekarang (+ jarak minimum broker)
+            if (buy && lvl >= ask - minDist) continue
+            if (!buy && lvl <= bid + minDist) continue
+            val body = JSONObject()
+                .put("actionType", if (buy) "ORDER_TYPE_BUY_LIMIT" else "ORDER_TYPE_SELL_LIMIT")
+                .put("symbol", sym)
+                .put("volume", lot)
+                .put("openPrice", lvl)
+                .put("stopLoss", Strategy.round(if (buy) lvl - slD else lvl + slD, digits))
+                .put("takeProfit", Strategy.round(if (buy) lvl + tpD else lvl - tpD, digits))
+                .put("comment", "mt5bot limit")
+                .put("magic", cfg.getLong("magic"))
+            try {
+                val r = a.trade(body)
+                val id = r.optString("orderId")
+                if (id.isNotEmpty()) ids.add(id)
+                placed.add("${if (buy) "Buy" else "Sell"} Limit ${fmtPrice(lvl, digits)}")
+            } catch (e: Exception) {
+                val msg = e.message ?: "Order gagal"
+                log("$sym: $msg", "error")
+                if (msg.contains("NO_MONEY")) noMoney = true
+            }
+        }
+        if (ids.isNotEmpty()) pending[sym] = ids
+        if (placed.isNotEmpty()) log("$sym: ${placed.joinToString(" & ")} | $lot lot")
     }
 
     private fun publish(acc: JSONObject, positions: List<Pos>, dayPl: Double, dayPlPct: Double, ddPct: Double) {

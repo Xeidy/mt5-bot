@@ -15,6 +15,9 @@ Cara simulasi:
 | **Trend Breakout (55, SL 3 ATR, trailing 5 ATR, 07–20 UTC)** | H1 | 2018 | 367 | 32% | **−0,01 R** (impas) |
 | **Trend Breakout** | H1 | 2019 | 371 | 35% | **+0,15 R** |
 
+| Limit Buy & Sell OCO (jarak 0,3 / TP 0,5 / SL 1,0 ATR), simulasi menit-per-menit | H1 | 2018 / 2019 | ~11 rb / ~11 rb | ~58% | **−0,11 / −0,15 R** |
+| Limit OCO, semua 162 variasi (M5/M15/H1, limit & stop) | – | 2018–2019 | – | – | **semua rugi** |
+
 Kesimpulan: di M1, spread kira-kira sama besar dengan ATR, jadi semua strategi M1 rugi. Trend Breakout H1 impas di 2018 dan untung di 2019. Tidak ada strategi yang terbukti selalu untung.
 
 Untuk menjalankan ulang: `python run.py old`, `python grid2.py`, `python detail.py`. Path data ada di `bt.py`.

@@ -96,6 +96,8 @@ class MetaApi(private val token: String, val accountId: String) {
         )
     )
 
+    fun orders() = JSONArray(request("GET", "${base()}/orders"))
+
     fun trade(body: JSONObject): JSONObject {
         val r = JSONObject(request("POST", "${base()}/trade", body.toString()))
         val code = r.optInt("numericCode", -1)
