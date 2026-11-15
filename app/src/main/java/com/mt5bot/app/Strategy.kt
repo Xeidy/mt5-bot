@@ -61,7 +61,35 @@ object Strategy {
         return a
     }
 
-    fun signal(closed: List<Candle>, cfg: JSONObject): Signal {
+    fun signal(closed: List<Candle>, cfg: JSONObject): Signal =
+        if (cfg.optString("strategy") == "scalp") scalp(closed, cfg) else emaRsi(closed, cfg)
+
+    /**
+     * Mode scalping agresif: entry hampir di setiap candle mengikuti momentum terakhir.
+     *  - Buy : candle terakhir naik (close > open) dan close di atas EMA cepat
+     *  - Sell: candle terakhir turun dan close di bawah EMA cepat
+     */
+    private fun scalp(closed: List<Candle>, cfg: JSONObject): Signal {
+        val fastP = cfg.getInt("ema_fast")
+        if (closed.size < max(fastP, 20) + 2) {
+            return Signal(null, 0.0, JSONObject().put("info", "data candle belum cukup"))
+        }
+        val closes = closed.map { it.close }
+        val f = ema(closes, fastP)
+        val r = rsi(closes)
+        val a = atr(closed)
+        val n = closes.size - 1
+        val last = closed[n]
+        val info = JSONObject()
+            .put("ema_fast", round(f[n], 5))
+            .put("rsi", round(r[n], 1))
+            .put("atr", round(a, 5))
+        if (last.close > last.open && last.close > f[n]) return Signal("buy", a, info)
+        if (last.close < last.open && last.close < f[n]) return Signal("sell", a, info)
+        return Signal(null, a, info)
+    }
+
+    private fun emaRsi(closed: List<Candle>, cfg: JSONObject): Signal {
         val fastP = cfg.getInt("ema_fast")
         val slowP = cfg.getInt("ema_slow")
         val trendP = cfg.getInt("ema_trend")

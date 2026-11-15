@@ -8,6 +8,8 @@ object Settings {
 
     fun defaults(): JSONObject = JSONObject()
         .put("symbols", "XAUUSD")
+        .put("strategy", "ema_rsi")
+        .put("allow_stacking", false)
         .put("timeframe", "M1")
         .put("risk_mode", "percent")
         .put("risk_percent", 1.0)
@@ -89,11 +91,13 @@ object Settings {
         if (cur.getInt("max_symbols_open") < 1) return "Maks pair bersamaan minimal 1"
         if (cur.getString("timeframe") !in TIMEFRAMES) return "Timeframe tidak valid"
         if (cur.getString("risk_mode") !in setOf("percent", "fixed")) return "Mode lot tidak valid"
+        if (cur.getString("strategy") !in setOf("ema_rsi", "scalp")) return "Strategi tidak valid"
         val risk = cur.getDouble("risk_percent")
         if (risk <= 0 || risk > 20) return "Risiko per sinyal harus 0–20%"
         if (cur.getDouble("fixed_lot") <= 0) return "Lot harus > 0"
         val pps = cur.getInt("positions_per_signal")
         if (pps < 1 || pps > 50) return "Posisi per sinyal harus 1–50"
+        if (cur.getInt("max_open_positions") > 200) return "Maks posisi terbuka maksimal 200"
         if (cur.getInt("max_open_positions") < 1) return "Maks posisi minimal 1"
         if (cur.getDouble("sl_atr_mult") <= 0) return "SL harus > 0 (bot selalu memakai stop loss)"
         if (cur.getDouble("tp_atr_mult") < 0) return "TP tidak boleh negatif"

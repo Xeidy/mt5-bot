@@ -63,6 +63,7 @@ object Engine {
     private var deals = JSONArray()
     private var lastDealsAt = 0L
     private var lastPosCount = -1
+    private var noMoney = false
 
     private val ISO = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'").withZone(ZoneOffset.UTC)
 
@@ -443,7 +444,9 @@ object Engine {
         if (signals.isEmpty()) return
 
         val open = positions.toMutableList()
+        noMoney = false
         for ((sym, sig) in signals) {
+            if (noMoney) break
             val side = sig.side ?: continue
             val buy = side == "buy"
             var mine = open.filter { it.symbol == sym }
@@ -455,9 +458,10 @@ object Engine {
                     mine = mine.filter { it.buy == buy }
                 }
             }
-            if (mine.isNotEmpty()) continue
+            if (mine.isNotEmpty() && !cfg.getBoolean("allow_stacking")) continue
+            if (mine.any { it.buy != buy }) continue  // jangan buka arah berlawanan di pair yang sama
 
-            val pairsOpen = open.map { it.symbol }.toSet().size
+            val pairsOpen = open.map { it.symbol }.filter { it != sym }.toSet().size
             val maxPairs = cfg.getInt("max_symbols_open")
             if (pairsOpen >= maxPairs) {
                 log("$sym ${side.uppercase()} dilewati: sudah $pairsOpen pair terbuka (batas $maxPairs)", "warn")
@@ -538,7 +542,12 @@ object Engine {
                 a.trade(body)
                 opened++
             } catch (e: Exception) {
-                log("$sym: ${e.message ?: "Order gagal"}", "error")
+                val msg = e.message ?: "Order gagal"
+                log("$sym: $msg", "error")
+                if (msg.contains("NO_MONEY")) {
+                    noMoney = true
+                    log("Margin tidak cukup untuk posisi baru — kecilkan lot atau jumlah posisi", "warn")
+                }
                 break
             }
         }
