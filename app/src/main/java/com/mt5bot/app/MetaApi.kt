@@ -72,6 +72,11 @@ class MetaApi(private val token: String, val accountId: String) {
         request("POST", "$provisioning/users/current/accounts/$accountId/deploy")
     }
 
+    fun symbols(): List<String> {
+        val a = JSONArray(request("GET", "${base()}/symbols"))
+        return (0 until a.length()).map { a.getString(it) }
+    }
+
     fun accountInfo() = JSONObject(request("GET", "${base()}/account-information"))
     fun positions() = JSONArray(request("GET", "${base()}/positions"))
     fun specification(symbol: String) =

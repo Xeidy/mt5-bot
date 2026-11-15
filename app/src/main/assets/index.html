@@ -121,6 +121,7 @@
         <button class="btn stop" id="bStop" onclick="act('stop')">Stop bot</button>
       </div>
       <div class="state" id="state">—</div>
+      <div class="state neg" id="notice" style="margin-top:6px"></div>
     </div>
 
     <div class="card">
@@ -154,7 +155,7 @@
       </div>
     </div>
     <div class="card">
-      <div class="row-h"><h3>Indikator terakhir</h3></div>
+      <div class="row-h"><h3>Indikator per pair</h3></div>
       <table><tbody id="indBody"></tbody></table>
     </div>
   </section>
@@ -165,10 +166,17 @@
     <form id="sForm" class="card" onsubmit="saveSettings(event)">
       <div class="sect" style="margin-top:0">Market</div>
       <div class="grid">
-        <label class="f">Simbol<input name="symbol"></label>
+        <label class="f" style="grid-column:1/-1">Pair (pisahkan koma, atau ALL)<input name="symbols" id="fSyms" autocapitalize="characters"></label>
         <label class="f">Timeframe<select name="timeframe">
           <option>M1</option><option>M5</option><option>M15</option><option>M30</option><option>H1</option><option>H4</option></select></label>
+        <label class="f">Maks pair bersamaan<input name="max_symbols_open" type="number" min="1"></label>
       </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+        <button type="button" class="btn ghost" onclick="setSyms('ALL')">Semua pair (28 + emas)</button>
+        <button type="button" class="btn ghost" onclick="setSyms('EURUSD,GBPUSD,USDJPY,AUDUSD,USDCAD,USDCHF,NZDUSD')">7 mayor</button>
+        <button type="button" class="btn ghost" onclick="setSyms('XAUUSD')">Emas saja</button>
+      </div>
+      <div class="hint">Akhiran broker (mis. XAUUSD<b>m</b> di Exness) dicocokkan otomatis. Banyak pair → pakai timeframe M5 atau lebih supaya pemindaian sempat selesai.</div>
 
       <div class="sect">Risiko</div>
       <div class="grid">
@@ -247,13 +255,13 @@ if (!window.Bot) {
   let run=false, t0=Date.now();
   window.Bot = {
     status(){ const pl=Math.sin((Date.now()-t0)/5000)*40; return JSON.stringify({connected:true,running:run,state:run?"Running":"Stopped",mode:"metaapi",
-      account:{login:198319734,server:"XMGlobal-MT5 2",currency:"USD",balance:10061.05,equity:10061.05+pl,margin:120,free_margin:9900,margin_level:8300,leverage:500,is_demo:true},
+      account:{login:198319734,server:"XMGlobal-MT5 2",currency:"USD",balance:10061.05,equity:10061.05+pl,margin:120,free_margin:9900,margin_level:8300,leverage:2000000000,is_demo:true},
       today:{pl:61.05+pl,pl_pct:0.6,drawdown_pct:0.4,closed:5,wins:5,realized:61.05},floating:pl,
       positions:run?[{ticket:"1",symbol:"XAUUSD",side:"buy",volume:0.37,profit:pl,time:new Date().toISOString()}]:[],
       history:[{ticket:"9",symbol:"XAUUSD",side:"sell",volume:0.43,profit:51.6,time:new Date().toISOString()},{ticket:"8",symbol:"XAUUSD",side:"sell",volume:0.49,profit:-39.2,time:new Date().toISOString()}],
-      indicators:{ema_fast:2650.1,ema_slow:2649.8,ema_trend:2645.2,rsi:56.2,atr:1.2},updated:new Date().toISOString(),
-      settings:{symbol:"XAUUSD",timeframe:"M1",risk_mode:"percent",risk_percent:1,fixed_lot:0.01,positions_per_signal:1,max_open_positions:15,sl_atr_mult:1.5,tp_atr_mult:2,breakeven_atr:1,trailing_atr:1,close_on_opposite:true,max_daily_loss_percent:5,max_drawdown_percent:20,max_spread_points:60,session_start:"00:00",session_end:"23:59",allow_real_account:false,ema_fast:9,ema_slow:21,ema_trend:50,rsi_overbought:70,rsi_oversold:30},
-      account_id:"865d3a4d-demo",has_token:true,battery_ok:false,logs:[{t:"12:00:01",level:"ok",msg:"Bot dimulai: XAUUSD M1"}]}); },
+      indicators:{EURUSDm:"RSI 55.2 · ATR 0.00031",XAUUSDm:"RSI 61.0 · ATR 1.2 · BUY"},updated:new Date().toISOString(),
+      settings:{symbols:"ALL",max_symbols_open:3,timeframe:"M1",risk_mode:"percent",risk_percent:1,fixed_lot:0.01,positions_per_signal:1,max_open_positions:15,sl_atr_mult:1.5,tp_atr_mult:2,breakeven_atr:1,trailing_atr:1,close_on_opposite:true,max_daily_loss_percent:5,max_drawdown_percent:20,max_spread_points:60,session_start:"00:00",session_end:"23:59",allow_real_account:false,ema_fast:9,ema_slow:21,ema_trend:50,rsi_overbought:70,rsi_oversold:30},
+      symbols:["EURUSDm","GBPUSDm","XAUUSDm"],notice:run?"":"Ini akun REAL. Centang Izinkan…",account_id:"865d3a4d-demo",has_token:true,battery_ok:false,logs:[{t:"12:00:01",level:"ok",msg:"Bot dimulai: XAUUSD M1"}]}); },
     start(){run=true}, stop(){run=false}, closeAll(){}, saveSettings(){return ""}, saveCredentials(){}, batteryExemption(){alert("battery")}
   };
 }
@@ -297,6 +305,8 @@ function saveSettings(e){
   const err = Bot.saveSettings(JSON.stringify(body));
   toast(err || "Pengaturan disimpan");
 }
+function setSyms(v){ $("fSyms").value=v; }
+let lastNotice="";
 function saveCreds(){
   const acc=$("cAcc").value.trim(), tok=$("cTok").value.trim();
   if(!acc){ toast("Account ID wajib diisi"); return; }
@@ -314,7 +324,7 @@ function render(s){
   if(a){
     $("hLogin").textContent=a.login;
     $("aLogin").innerHTML=esc(a.login)+` <span class="badge ${a.is_demo?"demo":"real"}">${a.is_demo?"DEMO":"REAL"}</span>`;
-    $("aServer").textContent=a.server+" · 1:"+a.leverage;
+    $("aServer").textContent=a.server+" · "+(a.leverage>=100000?"Unlimited":"1:"+a.leverage);
     $("bal").textContent=fmt(a.balance);
     $("eq").textContent=fmt(a.equity);
     $("fl").innerHTML=`<span class="${cls(s.floating)}">${sgn(s.floating)}</span>`;
@@ -329,15 +339,20 @@ function render(s){
     $("aServer").textContent = s.connected ? "Memuat…" : "Belum terhubung — isi tab Akun";
   }
   $("bStart").disabled=s.running||!s.connected; $("bStop").disabled=!s.running;
-  $("state").innerHTML=(s.running?'<span class="pulse"></span>':"")+"Status: <b>"+esc(s.state)+"</b>"+(s.settings?` · ${esc(s.settings.symbol)} ${s.settings.timeframe}`:"");
+  const nSym=(s.symbols||[]).length;
+  const symTxt = s.settings ? (nSym>1 ? nSym+" pair" : (nSym===1 ? s.symbols[0] : s.settings.symbols)) : "";
+  $("state").innerHTML=(s.running?'<span class="pulse"></span>':"")+"Status: <b>"+esc(s.state)+"</b>"+(s.settings?` · ${esc(symTxt)} ${s.settings.timeframe}`:"");
+  $("notice").textContent=s.notice||"";
+  if(s.notice && s.notice!==lastNotice) toast(s.notice);
+  lastNotice=s.notice||"";
 
   const P=s.positions||[];
   $("nPos").textContent=P.length;
   $("posBody").innerHTML=P.length?P.map(p=>`<tr><td>${esc(p.symbol)}</td><td>${p.volume}</td><td class="${p.side}">${p.side==="buy"?"Buy":"Sell"}</td><td class="${cls(p.profit)}">${sgn(p.profit)}</td></tr>`).join(""):`<tr><td colspan="4" class="empty">Tidak ada posisi</td></tr>`;
 
   const H=s.history||[];
-  const rows=P.map(p=>`<tr><td>${tm(p.time)}</td><td>${p.volume}</td><td class="${p.side}">${p.side==="buy"?"Buy":"Sell"}</td><td><span class="pill">open</span></td></tr>`)
-    .concat(H.map(h=>`<tr><td>${tm(h.time)}</td><td>${h.volume}</td><td class="${h.side}">${h.side==="buy"?"Buy":"Sell"}</td><td class="${cls(h.profit)}">${sgn(h.profit)}</td></tr>`));
+  const rows=P.map(p=>`<tr><td>${tm(p.time)}</td><td>${p.volume}</td><td class="${p.side}">${p.side==="buy"?"Buy":"Sell"}<br><small style="color:var(--mute)">${esc(p.symbol)}</small></td><td><span class="pill">open</span></td></tr>`)
+    .concat(H.map(h=>`<tr><td>${tm(h.time)}</td><td>${h.volume}</td><td class="${h.side}">${h.side==="buy"?"Buy":"Sell"}<br><small style="color:var(--mute)">${esc(h.symbol)}</small></td><td class="${cls(h.profit)}">${sgn(h.profit)}</td></tr>`));
   $("histBody").innerHTML=rows.length?rows.join(""):`<tr><td colspan="4" class="empty">Belum ada trade hari ini</td></tr>`;
   if(s.updated) $("upd").textContent="Updated "+tm(s.updated);
 

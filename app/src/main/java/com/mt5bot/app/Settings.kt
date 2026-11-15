@@ -7,13 +7,14 @@ import org.json.JSONObject
 object Settings {
 
     fun defaults(): JSONObject = JSONObject()
-        .put("symbol", "XAUUSD")
+        .put("symbols", "XAUUSD")
         .put("timeframe", "M1")
         .put("risk_mode", "percent")
         .put("risk_percent", 1.0)
         .put("fixed_lot", 0.01)
         .put("positions_per_signal", 1)
         .put("max_open_positions", 15)
+        .put("max_symbols_open", 3)
         .put("sl_atr_mult", 1.5)
         .put("tp_atr_mult", 2.0)
         .put("breakeven_atr", 1.0)
@@ -31,6 +32,16 @@ object Settings {
         .put("rsi_overbought", 70.0)
         .put("rsi_oversold", 30.0)
         .put("magic", 20261116)
+
+    /** 28 pair forex mayor & minor + emas, dipakai saat Pair = ALL. */
+    val ALL_PAIRS = listOf(
+        "EURUSD", "GBPUSD", "USDJPY", "USDCHF", "USDCAD", "AUDUSD", "NZDUSD",
+        "EURGBP", "EURJPY", "EURCHF", "EURCAD", "EURAUD", "EURNZD",
+        "GBPJPY", "GBPCHF", "GBPCAD", "GBPAUD", "GBPNZD",
+        "AUDJPY", "AUDCHF", "AUDCAD", "AUDNZD",
+        "NZDJPY", "NZDCHF", "NZDCAD", "CADJPY", "CADCHF", "CHFJPY",
+        "XAUUSD"
+    )
 
     val TIMEFRAMES = mapOf(
         "M1" to 60L, "M5" to 300L, "M15" to 900L, "M30" to 1800L, "H1" to 3600L, "H4" to 14400L
@@ -72,8 +83,10 @@ object Settings {
         } catch (e: Exception) {
             return "Ada isian yang bukan angka"
         }
-        cur.put("symbol", cur.getString("symbol").trim())
-        if (cur.getString("symbol").isEmpty()) return "Simbol wajib diisi"
+        val syms = cur.getString("symbols").split(",", " ", ";").map { it.trim() }.filter { it.isNotEmpty() }
+        if (syms.isEmpty()) return "Pair wajib diisi (atau ALL untuk semua pair)"
+        cur.put("symbols", if (syms.any { it.equals("ALL", true) }) "ALL" else syms.joinToString(",") { it.uppercase() })
+        if (cur.getInt("max_symbols_open") < 1) return "Maks pair bersamaan minimal 1"
         if (cur.getString("timeframe") !in TIMEFRAMES) return "Timeframe tidak valid"
         if (cur.getString("risk_mode") !in setOf("percent", "fixed")) return "Mode lot tidak valid"
         val risk = cur.getDouble("risk_percent")

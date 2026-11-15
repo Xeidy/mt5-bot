@@ -40,13 +40,22 @@ object Engine {
         private set
     @Volatile var uiVisible = false
     @Volatile private var status = "Belum terhubung"
+    @Volatile private var notice = ""
     @Volatile private var snapshot = JSONObject()
     private val logs = ArrayDeque<JSONObject>()
     private var lastErr = ""
 
+    // pair yang dipantau (nama persis di broker)
+    @Volatile private var symbols: List<String> = emptyList()
+    private var symbolsKey = ""
+    private var brokerSymbols: List<String> = emptyList()
+    private var brokerSymbolsAt = 0L
+
     private var lastBarIdx = -1L
-    private var lastInfo = JSONObject()
-    private var atr = 0.0
+    private val atrMap = HashMap<String, Double>()
+    private val infoMap = LinkedHashMap<String, String>()
+    private val specs = HashMap<String, JSONObject>()
+
     private var day: LocalDate? = null
     private var dayStartEquity = 0.0
     private var peakEquity = 0.0
@@ -54,8 +63,6 @@ object Engine {
     private var deals = JSONArray()
     private var lastDealsAt = 0L
     private var lastPosCount = -1
-    private var spec: JSONObject? = null
-    private var specSymbol = ""
 
     private val ISO = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'").withZone(ZoneOffset.UTC)
 
@@ -79,23 +86,27 @@ object Engine {
 
     fun cmdStart() = exec.execute {
         try {
+            notice = ""
             val a = api ?: throw ApiException(0, "Belum terhubung ke MetaApi")
             val acc = a.accountInfo()
             val demo = acc.optString("type") == "ACCOUNT_TRADE_MODE_DEMO"
             if (!demo && !cfg.getBoolean("allow_real_account"))
-                throw ApiException(0, "Akun REAL terdeteksi. Aktifkan 'Izinkan akun real' di Settings bila memang ingin trading uang asli.")
+                throw ApiException(0, "Ini akun REAL. Centang 'Izinkan bot trading di akun REAL' di tab Settings lalu Simpan, kalau memang mau trading uang asli.")
             if (!acc.optBoolean("tradeAllowed", true))
-                throw ApiException(0, "Trading tidak diizinkan untuk akun ini (cek investor password?)")
-            loadSpec(a, cfg.getString("symbol"), force = true)
+                throw ApiException(0, "Trading tidak diizinkan untuk akun ini (login pakai investor password?)")
+            resolveSymbols(a, force = true)
+            if (symbols.isEmpty())
+                throw ApiException(0, "Tidak ada pair yang cocok di broker. Cek isian Pair di Settings.")
             running = true
             Settings.prefs(ctx).edit().putBoolean("running", true).apply()
             pausedDay = null
             peakEquity = acc.optDouble("equity")
             lastBarIdx = -1
             startService()
-            log("Bot dimulai: ${cfg.getString("symbol")} ${cfg.getString("timeframe")}", "ok")
+            log("Bot dimulai: ${symbols.size} pair, ${cfg.getString("timeframe")}", "ok")
             tick()
         } catch (e: Exception) {
+            notice = e.message ?: "Gagal start"
             log("Gagal start: ${e.message}", "error")
         }
     }
@@ -119,6 +130,9 @@ object Engine {
         api = null
         connected = false
         lastErr = ""
+        notice = ""
+        symbolsKey = ""
+        brokerSymbolsAt = 0
         log("Data akun MetaApi disimpan, menghubungkan…")
         tick()
     }
@@ -126,16 +140,24 @@ object Engine {
     fun reloadSettings() = exec.execute {
         cfg = Settings.load(ctx)
         lastBarIdx = -1
-        specSymbol = ""
+        symbolsKey = ""
+        notice = ""
         log("Pengaturan disimpan")
+        try {
+            api?.let { resolveSymbols(it) }
+        } catch (e: Exception) {
+            log("Gagal membaca daftar pair: ${e.message}", "error")
+        }
     }
 
     fun statusJson(): String {
         val s = JSONObject(snapshot.toString())
         s.put("state", status)
+        s.put("notice", notice)
         s.put("connected", connected)
         s.put("running", running)
         s.put("settings", JSONObject(Settings.load(ctx).toString()))
+        s.put("symbols", JSONArray(symbols))
         s.put("account_id", Settings.accountId(ctx))
         s.put("has_token", Settings.token(ctx).isNotBlank())
         synchronized(logs) { s.put("logs", JSONArray(logs.take(80))) }
@@ -173,18 +195,43 @@ object Engine {
         log(msg, "warn")
     }
 
-    private fun loadSpec(a: MetaApi, symbol: String, force: Boolean = false): JSONObject {
-        if (force || spec == null || specSymbol != symbol) {
-            try {
-                spec = a.specification(symbol)
-            } catch (e: ApiException) {
-                if (e.code == 404) throw ApiException(404, "Simbol '$symbol' tidak ada di broker ini. Cek nama persisnya di MT5 (mis. XAUUSDm).")
-                throw e
-            }
-            specSymbol = symbol
+    /**
+     * Ubah isian Pair (mis. "XAUUSD,EURUSD" atau "ALL") menjadi nama persis di broker.
+     * Akhiran broker dicocokkan otomatis: XAUUSD -> XAUUSDm (Exness), EURUSD.r, dll.
+     */
+    private fun resolveSymbols(a: MetaApi, force: Boolean = false) {
+        val key = cfg.getString("symbols")
+        val now = System.currentTimeMillis()
+        if (!force && key == symbolsKey && symbols.isNotEmpty()) return
+        if (brokerSymbols.isEmpty() || now - brokerSymbolsAt > 30 * 60_000) {
+            brokerSymbols = a.symbols()
+            brokerSymbolsAt = now
         }
-        return spec!!
+        val wanted = if (key.equals("ALL", true)) Settings.ALL_PAIRS
+        else key.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+
+        val out = ArrayList<String>()
+        val missing = ArrayList<String>()
+        for (w in wanted) {
+            val exact = brokerSymbols.firstOrNull { it.equals(w, true) }
+            val match = exact ?: brokerSymbols
+                .filter { it.length in (w.length + 1)..(w.length + 3) && it.startsWith(w, true) }
+                .minByOrNull { it.length }
+            if (match != null) {
+                if (match !in out) out.add(match)
+            } else {
+                missing.add(w)
+            }
+        }
+        symbols = out
+        symbolsKey = key
+        specs.keys.retainAll(out.toSet())
+        if (out.isNotEmpty()) log("Pair dipantau (${out.size}): ${out.joinToString(", ")}")
+        if (missing.isNotEmpty()) log("Tidak ada di broker, dilewati: ${missing.joinToString(", ")}", "warn")
     }
+
+    private fun spec(a: MetaApi, symbol: String): JSONObject =
+        specs.getOrPut(symbol) { a.specification(symbol) }
 
     private fun parsePos(o: JSONObject) = Pos(
         id = o.optString("id"),
@@ -198,6 +245,8 @@ object Engine {
         profit = o.optDouble("profit", 0.0) + o.optDouble("swap", 0.0) + o.optDouble("commission", 0.0),
         time = o.optString("time")
     )
+
+    private fun fmtPrice(v: Double, digits: Int) = "%.${digits}f".format(v)
 
     // ------------------------------------------------------------------ loop
     private fun tick() {
@@ -240,8 +289,7 @@ object Engine {
         status = "Menghubungkan ke MetaApi…"
         val a = MetaApi(token, id)
         val acc = a.init()
-        val state = acc.optString("state")
-        if (state == "UNDEPLOYED") {
+        if (acc.optString("state") == "UNDEPLOYED") {
             a.deploy()
             log("Mengaktifkan akun di MetaApi (biasanya 1–2 menit)…", "warn")
         }
@@ -257,8 +305,9 @@ object Engine {
             log("Akun ${acc.optLong("login")} (${acc.optString("server")}) - $kind", "ok")
         }
         connected = true
+        if (symbolsKey != cfg.getString("symbols")) resolveSymbols(a)
+
         val magic = cfg.getLong("magic")
-        val symbol = cfg.getString("symbol")
         val raw = a.positions()
         val positions = (0 until raw.length()).map { raw.getJSONObject(it) }
             .filter { it.optLong("magic") == magic }
@@ -304,11 +353,11 @@ object Engine {
                 pausedDay == today -> state = "Paused (batas harian)"
                 !inSession() -> {
                     state = "Di luar jam trading"
-                    manage(a, positions, symbol)
+                    manage(a, positions)
                 }
                 else -> {
-                    manage(a, positions, symbol)
-                    scan(a, acc, symbol, positions)
+                    manage(a, positions)
+                    scan(a, acc, positions)
                 }
             }
         }
@@ -328,6 +377,14 @@ object Engine {
         return if (a <= b) now in a..b else (now >= a || now <= b)
     }
 
+    private fun closePos(a: MetaApi, id: String): Boolean = try {
+        a.trade(JSONObject().put("actionType", "POSITION_CLOSE_ID").put("positionId", id))
+        true
+    } catch (e: Exception) {
+        log("Gagal tutup #$id: ${e.message}", "error")
+        false
+    }
+
     private fun closeAll(why: String): Int {
         val a = api ?: return 0
         val magic = cfg.getLong("magic")
@@ -336,18 +393,14 @@ object Engine {
         for (i in 0 until raw.length()) {
             val o = raw.getJSONObject(i)
             if (o.optLong("magic") != magic) continue
-            try {
-                a.trade(JSONObject().put("actionType", "POSITION_CLOSE_ID").put("positionId", o.optString("id")))
-                n++
-            } catch (e: Exception) {
-                log("Gagal tutup #${o.optString("id")}: ${e.message}", "error")
-            }
+            if (closePos(a, o.optString("id"))) n++
         }
         if (n > 0) log("Tutup $n posisi ($why)", "warn")
         return n
     }
 
-    private fun scan(a: MetaApi, acc: JSONObject, symbol: String, positions: List<Pos>) {
+    /** Dipanggil tiap kali candle baru tutup: pindai semua pair, lalu eksekusi sinyal. */
+    private fun scan(a: MetaApi, acc: JSONObject, positions: List<Pos>) {
         val tf = cfg.getString("timeframe")
         val tfSec = Settings.TIMEFRAMES[tf] ?: 60L
         val nowSec = System.currentTimeMillis() / 1000
@@ -356,63 +409,91 @@ object Engine {
         val first = lastBarIdx == -1L
         lastBarIdx = idx
 
-        val limit = min(1000, max(cfg.getInt("ema_trend") * 3, 200) + 5)
-        val arr = a.candles(symbol, Settings.TF_API[tf] ?: "1m", limit)
-        val closed = (0 until arr.length()).map { arr.getJSONObject(it) }
-            .map {
-                Candle(
-                    Instant.parse(it.getString("time")).epochSecond,
-                    it.getDouble("open"), it.getDouble("high"), it.getDouble("low"), it.getDouble("close")
-                )
+        val limit = min(1000, max(cfg.getInt("ema_trend") * 3, 150) + 5)
+        val signals = ArrayList<Pair<String, Signal>>()
+        for (sym in symbols) {
+            try {
+                val arr = a.candles(sym, Settings.TF_API[tf] ?: "1m", limit)
+                val closed = (0 until arr.length()).map { arr.getJSONObject(it) }
+                    .map {
+                        Candle(
+                            Instant.parse(it.getString("time")).epochSecond,
+                            it.getDouble("open"), it.getDouble("high"), it.getDouble("low"), it.getDouble("close")
+                        )
+                    }
+                    .sortedBy { it.time }
+                    .distinctBy { it.time }
+                    .filter { it.time + tfSec <= nowSec }
+                val sig = Strategy.signal(closed, cfg)
+                atrMap[sym] = sig.atr
+                val sideTxt = sig.side?.let { " · ${it.uppercase()}" } ?: ""
+                infoMap[sym] = if (sig.info.has("rsi"))
+                    "RSI ${sig.info.optDouble("rsi")} · ATR ${sig.info.optDouble("atr")}$sideTxt"
+                else sig.info.optString("info")
+                if (sig.side != null) signals.add(Pair(sym, sig))
+            } catch (e: ApiException) {
+                log("$sym: ${e.message}", "warn")
             }
-            .sortedBy { it.time }
-            .distinctBy { it.time }
-            .filter { it.time + tfSec <= nowSec }
-
-        val sig = Strategy.signal(closed, cfg)
-        atr = sig.atr
-        lastInfo = sig.info
+        }
+        infoMap.keys.retainAll(symbols.toSet())
         if (first) {
-            log("Memindai market untuk entry pertama…")
+            log("Memindai ${symbols.size} pair untuk entry pertama…")
             return
         }
-        val side = sig.side ?: return
-        val buy = side == "buy"
+        if (signals.isEmpty()) return
 
-        var mine = positions.filter { it.symbol == symbol }
-        if (cfg.getBoolean("close_on_opposite")) {
-            val opp = mine.filter { it.buy != buy }
-            for (p in opp) {
-                try {
-                    a.trade(JSONObject().put("actionType", "POSITION_CLOSE_ID").put("positionId", p.id))
-                } catch (e: Exception) {
-                    log("Gagal tutup #${p.id}: ${e.message}", "error")
+        val open = positions.toMutableList()
+        for ((sym, sig) in signals) {
+            val side = sig.side ?: continue
+            val buy = side == "buy"
+            var mine = open.filter { it.symbol == sym }
+            if (cfg.getBoolean("close_on_opposite")) {
+                val opp = mine.filter { it.buy != buy }
+                for (p in opp) if (closePos(a, p.id)) open.remove(p)
+                if (opp.isNotEmpty()) {
+                    log("$sym sinyal ${side.uppercase()} - tutup ${opp.size} posisi berlawanan")
+                    mine = mine.filter { it.buy == buy }
                 }
             }
-            if (opp.isNotEmpty()) {
-                log("Sinyal ${side.uppercase()} - tutup ${opp.size} posisi berlawanan")
-                mine = mine.filter { it.buy == buy }
+            if (mine.isNotEmpty()) continue
+
+            val pairsOpen = open.map { it.symbol }.toSet().size
+            val maxPairs = cfg.getInt("max_symbols_open")
+            if (pairsOpen >= maxPairs) {
+                log("$sym ${side.uppercase()} dilewati: sudah $pairsOpen pair terbuka (batas $maxPairs)", "warn")
+                continue
+            }
+            val opened = try {
+                enter(a, acc, sym, sig, cfg.getInt("max_open_positions") - open.size)
+            } catch (e: ApiException) {
+                log("$sym: ${e.message}", "error")
+                0
+            }
+            repeat(opened) {
+                open.add(Pos("new", sym, buy, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, ""))
             }
         }
-        if (mine.isNotEmpty()) return
+    }
 
-        val sp = loadSpec(a, symbol)
-        val price = a.price(symbol)
+    /** Buka posisi untuk satu sinyal. Return jumlah posisi yang terbuka. */
+    private fun enter(a: MetaApi, acc: JSONObject, sym: String, sig: Signal, room: Int): Int {
+        val side = sig.side ?: return 0
+        val buy = side == "buy"
+        val n = min(cfg.getInt("positions_per_signal"), room)
+        if (n <= 0) {
+            log("$sym ${side.uppercase()} dilewati: maks posisi terbuka tercapai", "warn")
+            return 0
+        }
+        val sp = spec(a, sym)
+        val price = a.price(sym)
         val bid = price.getDouble("bid")
         val ask = price.getDouble("ask")
-        val point = sp.optDouble("point", sp.optDouble("tickSize", 0.01))
-        val digits = sp.optInt("digits", 2)
+        val point = sp.optDouble("point", sp.optDouble("tickSize", 0.00001))
+        val digits = sp.optInt("digits", 5)
         val spread = ((ask - bid) / point).roundToLong()
         if (spread > cfg.getInt("max_spread_points")) {
-            log("Sinyal ${side.uppercase()} dilewati: spread $spread > ${cfg.getInt("max_spread_points")} point", "warn")
-            return
-        }
-
-        var n = cfg.getInt("positions_per_signal")
-        n = min(n, cfg.getInt("max_open_positions") - positions.size)
-        if (n <= 0) {
-            log("Maks posisi terbuka tercapai, sinyal dilewati", "warn")
-            return
+            log("$sym ${side.uppercase()} dilewati: spread $spread > ${cfg.getInt("max_spread_points")} point", "warn")
+            return 0
         }
 
         val minDist = (sp.optInt("stopsLevel", 0) + 2) * point
@@ -431,9 +512,9 @@ object Engine {
             val riskMoney = acc.optDouble("balance") * cfg.getDouble("risk_percent") / 100
             lot = Strategy.lotForRisk(riskMoney / n, slDist, tickSize, tickValue, vMin, vMax, vStep)
             if (lot <= 0) {
-                log("Sinyal ${side.uppercase()} dilewati: risiko ${cfg.getDouble("risk_percent")}% terlalu kecil " +
-                    "untuk lot minimum $vMin (kurangi jumlah posisi atau naikkan risiko)", "warn")
-                return
+                log("$sym ${side.uppercase()} dilewati: risiko ${cfg.getDouble("risk_percent")}% terlalu kecil " +
+                    "untuk lot minimum $vMin", "warn")
+                return 0
             }
         } else {
             lot = Strategy.normLot(max(vMin, min(cfg.getDouble("fixed_lot"), vMax)), vStep)
@@ -447,7 +528,7 @@ object Engine {
         for (i in 0 until n) {
             val body = JSONObject()
                 .put("actionType", if (buy) "ORDER_TYPE_BUY" else "ORDER_TYPE_SELL")
-                .put("symbol", symbol)
+                .put("symbol", sym)
                 .put("volume", lot)
                 .put("stopLoss", sl)
                 .put("comment", "mt5bot ${i + 1}/$n")
@@ -457,39 +538,46 @@ object Engine {
                 a.trade(body)
                 opened++
             } catch (e: Exception) {
-                log(e.message ?: "Order gagal", "error")
+                log("$sym: ${e.message ?: "Order gagal"}", "error")
                 break
             }
         }
         if (opened > 0) {
             val risk = if (tickValue > 0) slDist / tickSize * tickValue * lot * opened else 0.0
-            val m = "${side.uppercase()} ${opened}x $lot lot $symbol @ ${"%.${digits}f".format(entry)} | " +
-                "SL $sl TP ${if (tp > 0) tp else "-"} | risiko ≈ ${"%.2f".format(risk)} ${acc.optString("currency")}"
+            val tpTxt = if (tp > 0) fmtPrice(tp, digits) else "-"
+            val m = "${side.uppercase()} ${opened}x $lot lot $sym @ ${fmtPrice(entry, digits)} | " +
+                "SL ${fmtPrice(sl, digits)} TP $tpTxt | risiko ≈ ${"%.2f".format(risk)} ${acc.optString("currency")}"
             log(m, "ok")
             alert(m)
             lastDealsAt = 0
         }
+        return opened
     }
 
-    private fun manage(a: MetaApi, positions: List<Pos>, symbol: String) {
+    private fun manage(a: MetaApi, positions: List<Pos>) {
         val be = cfg.getDouble("breakeven_atr")
         val tr = cfg.getDouble("trailing_atr")
-        if ((be <= 0 && tr <= 0) || atr <= 0) return
-        val mine = positions.filter { it.symbol == symbol }
-        if (mine.isEmpty()) return
-        val sp = loadSpec(a, symbol)
-        val digits = sp.optInt("digits", 2)
-        val point = sp.optDouble("point", 0.01)
-        for (p in mine) {
+        if (be <= 0 && tr <= 0) return
+        for (p in positions) {
+            val atr = atrMap[p.symbol] ?: continue
+            if (atr <= 0) continue
+            val sp = try {
+                spec(a, p.symbol)
+            } catch (e: ApiException) {
+                continue
+            }
+            val digits = sp.optInt("digits", 5)
+            val point = sp.optDouble("point", 0.00001)
             val gain = if (p.buy) p.current - p.open else p.open - p.current
             var newSl: Double? = null
             if (be > 0 && gain >= be * atr) newSl = p.open
             if (tr > 0 && gain >= tr * atr) {
                 val cand = if (p.buy) p.current - tr * atr else p.current + tr * atr
-                if (newSl == null || (p.buy && cand > newSl) || (!p.buy && cand < newSl)) newSl = cand
+                val cur = newSl
+                if (cur == null || (p.buy && cand > cur) || (!p.buy && cand < cur)) newSl = cand
             }
-            if (newSl == null) continue
-            val sl = Strategy.round(newSl, digits)
+            val target = newSl ?: continue
+            val sl = Strategy.round(target, digits)
             val better = p.sl == 0.0 || (p.buy && sl > p.sl + point) || (!p.buy && sl < p.sl - point)
             if (!better) continue
             try {
@@ -498,7 +586,7 @@ object Engine {
                 if (p.tp > 0) body.put("takeProfit", p.tp)
                 a.trade(body)
             } catch (e: Exception) {
-                log("#${p.id}: ${e.message}", "warn")
+                log("${p.symbol} #${p.id}: ${e.message}", "warn")
             }
         }
     }
@@ -523,7 +611,7 @@ object Engine {
             .put("margin", Strategy.round(acc.optDouble("margin", 0.0), 2))
             .put("free_margin", Strategy.round(acc.optDouble("freeMargin", 0.0), 2))
             .put("margin_level", Strategy.round(acc.optDouble("marginLevel", 0.0).let { if (it.isNaN()) 0.0 else it }, 2))
-            .put("leverage", acc.optInt("leverage"))
+            .put("leverage", acc.optLong("leverage"))
             .put("is_demo", acc.optString("type") == "ACCOUNT_TRADE_MODE_DEMO"))
         s.put("today", JSONObject()
             .put("pl", Strategy.round(dayPl, 2))
@@ -548,7 +636,9 @@ object Engine {
                 .put("profit", Strategy.round(dealPl(it), 2))
                 .put("time", it.optString("time"))
         }))
-        s.put("indicators", lastInfo)
+        val ind = JSONObject()
+        for ((k, v) in infoMap) ind.put(k, v)
+        s.put("indicators", ind)
         s.put("updated", Instant.now().toString())
         snapshot = s
     }

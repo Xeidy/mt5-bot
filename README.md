@@ -12,7 +12,7 @@ Buka tab **Releases** di repo ini, lalu unduh `mt5-bot.apk` dari build terbaru. 
 4. Install APK. Kalau Android minta izin, izinkan *install dari sumber tidak dikenal*.
 5. Buka aplikasi → tab **Akun** → isi Account ID dan token → **Simpan & hubungkan**.
 6. Masih di tab Akun, tekan **Matikan optimasi baterai**.
-7. Tab **Settings** → atur simbol (harus sama persis dengan di broker, mis. `XAUUSDm`) dan risiko.
+7. Tab **Settings** → isi **Pair** (mis. `XAUUSD,EURUSD`, atau `ALL` untuk 28 pair forex + emas) dan risiko. Akhiran broker seperti `m` di Exness dicocokkan otomatis.
 8. Tab **Bot** → **Start bot**.
 
 ## Cara kerja
@@ -27,6 +27,8 @@ Sama seperti versi PC:
 - **SL/TP**: berbasis ATR, dengan breakeven dan trailing.
 - **Lot**: dihitung otomatis dari % risiko.
 - **Pengaman**: batas rugi harian, batas drawdown, filter spread, dan jam trading (UTC).
+
+**Maks pair bersamaan** membatasi berapa pair yang boleh punya posisi terbuka sekaligus, jadi total risiko tetap terkendali saat memantau banyak pair.
 
 Bot menolak trading di akun **REAL** sampai opsi "Izinkan akun real" dicentang di Settings.
 
