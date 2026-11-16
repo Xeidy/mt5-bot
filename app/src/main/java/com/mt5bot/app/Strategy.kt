@@ -12,6 +12,9 @@ data class Candle(val time: Long, val open: Double, val high: Double, val low: D
 
 data class Signal(val side: String?, val atr: Double, val info: JSONObject)
 
+/** Setup SMC: harga limit entry, SL, TP + keterangan. */
+data class SmcSetup(val buy: Boolean, val entry: Double, val sl: Double, val tp: Double, val note: String)
+
 /**
  * Strategi "EMA Trend + RSI" (sama dengan versi PC):
  *  - Buy : EMA cepat memotong ke atas EMA lambat, harga > EMA tren, 50 < RSI < overbought
@@ -157,6 +160,65 @@ object Strategy {
         if (crossUp && closes[n] > t[n] && r[n] > 50 && r[n] < ob) return Signal("buy", a, info)
         if (crossDn && closes[n] < t[n] && r[n] < 50 && r[n] > os) return Signal("sell", a, info)
         return Signal(null, a, info)
+    }
+
+    /**
+     * SMC / ICT: Liquidity sweep -> Displacement (BOS) -> Fair Value Gap.
+     * Dipanggil untuk candle terakhir yang sudah tutup (indeks i):
+     *  Bullish: dalam 12 candle terakhir ada candle yang menembus LOW hari sebelumnya (sweep),
+     *           candle i-1 bullish besar (body >= k×ATR) dan close-nya menembus high 10 candle
+     *           sebelumnya (BOS), lalu ada gap: low[i] > high[i-2] (FVG).
+     *  Entry : Buy Limit di tengah FVG. SL: di bawah low candle i-2 / i-1 − 0.1 ATR. TP: RR × risiko.
+     *  Bearish kebalikannya. Hanya di killzone London (07–10 UTC) & New York (12–15 UTC).
+     */
+    fun smc(closed: List<Candle>, cfg: JSONObject): Pair<SmcSetup?, JSONObject> {
+        val info = JSONObject()
+        val n = closed.size
+        if (n < 120) return Pair(null, info.put("info", "data candle belum cukup"))
+        val i = n - 1
+        val a = atr(closed)
+        info.put("atr", round(a, 5))
+        val k = cfg.optDouble("smc_impulse_atr", 1.5)
+        val rr = cfg.optDouble("smc_rr", 3.0)
+        val hour = java.time.Instant.ofEpochSecond(closed[i].time).atZone(java.time.ZoneOffset.UTC).hour
+        if (cfg.optBoolean("smc_killzone", true) && !((hour in 7..9) || (hour in 12..14))) {
+            return Pair(null, info.put("info", "di luar killzone"))
+        }
+        // high/low hari sebelumnya (UTC) untuk tiap candle
+        val dayOf = closed.map { it.time / 86400 }
+        val dayHigh = HashMap<Long, Double>(); val dayLow = HashMap<Long, Double>()
+        for (j in 0 until n) {
+            val d = dayOf[j]
+            dayHigh[d] = max(dayHigh[d] ?: Double.NEGATIVE_INFINITY, closed[j].high)
+            dayLow[d] = min(dayLow[d] ?: Double.POSITIVE_INFINITY, closed[j].low)
+        }
+        var sweptLow = false; var sweptHigh = false
+        for (j in max(0, i - 11)..i) {
+            val pdh = dayHigh[dayOf[j] - 1]; val pdl = dayLow[dayOf[j] - 1]
+            if (pdl != null && closed[j].low < pdl) sweptLow = true
+            if (pdh != null && closed[j].high > pdh) sweptHigh = true
+        }
+        var hh = Double.NEGATIVE_INFINITY; var ll = Double.POSITIVE_INFINITY
+        for (j in i - 11..i - 2) { hh = max(hh, closed[j].high); ll = min(ll, closed[j].low) }
+        val c0 = closed[i]; val c1 = closed[i - 1]; val c2 = closed[i - 2]
+        val body = abs(c1.close - c1.open)
+        info.put("sweep_low", sweptLow).put("sweep_high", sweptHigh)
+
+        if (sweptLow && c0.low - c2.high >= 0.1 * a && c1.close > c1.open && body >= k * a && c1.close > hh) {
+            val entry = (c0.low + c2.high) / 2
+            val sl = min(c2.low, c1.low) - 0.1 * a
+            val risk = entry - sl
+            if (risk > 0) return Pair(SmcSetup(true, entry, sl, entry + rr * risk,
+                "Sweep low → BOS → FVG bullish"), info)
+        }
+        if (sweptHigh && c2.low - c0.high >= 0.1 * a && c1.close < c1.open && body >= k * a && c1.close < ll) {
+            val entry = (c0.high + c2.low) / 2
+            val sl = max(c2.high, c1.high) + 0.1 * a
+            val risk = sl - entry
+            if (risk > 0) return Pair(SmcSetup(false, entry, sl, entry - rr * risk,
+                "Sweep high → BOS → FVG bearish"), info)
+        }
+        return Pair(null, info)
     }
 
     /** Lot agar kerugian saat SL kena ≈ riskMoney. 0 jika di bawah lot minimum. */

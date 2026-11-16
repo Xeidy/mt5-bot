@@ -10,6 +10,9 @@ object Settings {
         .put("symbols", "XAUUSD")
         .put("strategy", "trend")
         .put("donchian_n", 55)
+        .put("smc_rr", 3.0)
+        .put("smc_impulse_atr", 1.5)
+        .put("smc_killzone", true)
         .put("limit_dist_atr", 0.3)
         .put("limit_tp_atr", 0.5)
         .put("limit_sl_atr", 1.0)
@@ -99,9 +102,11 @@ object Settings {
         if (cur.getInt("max_symbols_open") < 1) return "Maks pair bersamaan minimal 1"
         if (cur.getString("timeframe") !in TIMEFRAMES) return "Timeframe tidak valid"
         if (cur.getString("risk_mode") !in setOf("percent", "fixed")) return "Mode lot tidak valid"
-        if (cur.getString("strategy") !in setOf("trend", "ema_rsi", "scalp", "limit")) return "Strategi tidak valid"
+        if (cur.getString("strategy") !in setOf("trend", "smc", "ema_rsi", "scalp", "limit")) return "Strategi tidak valid"
         if (cur.getDouble("limit_dist_atr") <= 0 || cur.getDouble("limit_tp_atr") <= 0 || cur.getDouble("limit_sl_atr") <= 0)
             return "Jarak limit, TP, dan SL limit harus > 0"
+        if (cur.getDouble("smc_rr") < 1.0 || cur.getDouble("smc_rr") > 10) return "RR SMC harus 1–10"
+        if (cur.getDouble("smc_impulse_atr") <= 0) return "Ukuran displacement harus > 0"
         val dn = cur.getInt("donchian_n")
         if (dn < 5 || dn > 300) return "Periode breakout harus 5–300"
         val risk = cur.getDouble("risk_percent")

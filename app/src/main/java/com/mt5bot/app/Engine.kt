@@ -13,6 +13,7 @@ import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToLong
@@ -66,6 +67,9 @@ object Engine {
     private var noMoney = false
     /** order pending milik bot per pair (strategi limit), untuk OCO & pembatalan */
     private val pending = HashMap<String, MutableList<String>>()
+    /** order limit SMC per pair: id order, kedaluwarsa (detik), arah, TP */
+    private data class SmcOrder(val id: String, val expiry: Long, val buy: Boolean, val tp: Double)
+    private val smcOrders = HashMap<String, SmcOrder>()
 
     private val ISO = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'").withZone(ZoneOffset.UTC)
 
@@ -192,7 +196,10 @@ object Engine {
     }
 
     private fun stopBot(msg: String) {
-        api?.let { a -> for (sym in pending.keys.toList()) cancelPending(a, sym) }
+        api?.let { a ->
+            for (sym in pending.keys.toList()) cancelPending(a, sym)
+            for (sym in smcOrders.keys.toList()) cancelSmc(a, sym)
+        }
         running = false
         Settings.prefs(ctx).edit().putBoolean("running", false).apply()
         ctx.stopService(Intent(ctx, BotService::class.java))
@@ -393,6 +400,7 @@ object Engine {
     private fun closeAll(why: String): Int {
         val a = api ?: return 0
         for (sym in pending.keys.toList()) cancelPending(a, sym)
+        for (sym in smcOrders.keys.toList()) cancelSmc(a, sym)
         val magic = cfg.getLong("magic")
         val raw = a.positions()
         var n = 0
@@ -430,6 +438,18 @@ object Engine {
                     .sortedBy { it.time }
                     .distinctBy { it.time }
                     .filter { it.time + tfSec <= nowSec }
+                if (cfg.getString("strategy") == "smc") {
+                    val (setup, sinfo) = Strategy.smc(closed, cfg)
+                    atrMap[sym] = sinfo.optDouble("atr", 0.0)
+                    infoMap[sym] = setup?.let { "${it.note} · ${if (it.buy) "BUY" else "SELL"} LIMIT" }
+                        ?: (sinfo.optString("info").ifEmpty {
+                            "ATR ${sinfo.optDouble("atr")}" +
+                                (if (sinfo.optBoolean("sweep_low")) " · sweep low" else "") +
+                                (if (sinfo.optBoolean("sweep_high")) " · sweep high" else "")
+                        })
+                    if (!first && setup != null) placeSmc(a, acc, sym, setup, tfSec, positions)
+                    continue
+                }
                 if (cfg.getString("strategy") == "limit") {
                     val la = Strategy.atr(closed)
                     atrMap[sym] = la
@@ -584,6 +604,7 @@ object Engine {
 
     private fun manage(a: MetaApi, positions: List<Pos>) {
         if (pending.isNotEmpty()) oco(a, positions)
+        if (smcOrders.isNotEmpty()) smcHousekeeping(a, positions)
         if (cfg.getBoolean("layering")) {
             layers(a, positions)
             return
@@ -822,6 +843,127 @@ object Engine {
         }
         if (ids.isNotEmpty()) pending[sym] = ids
         if (placed.isNotEmpty()) log("$sym: ${placed.joinToString(" & ")} | $lot lot")
+    }
+
+    // ------------------------------------------------------------------ SMC
+    private fun cancelSmc(a: MetaApi, sym: String) {
+        val o = smcOrders.remove(sym) ?: return
+        try {
+            a.trade(JSONObject().put("actionType", "ORDER_CANCEL").put("orderId", o.id))
+        } catch (_: Exception) {
+        }
+    }
+
+    /** Batalkan limit SMC yang kedaluwarsa, atau yang harganya sudah lari ke TP sebelum terisi. */
+    private fun smcHousekeeping(a: MetaApi, positions: List<Pos>) {
+        val now = System.currentTimeMillis() / 1000
+        val filled = positions.map { it.symbol }.toSet()
+        for ((sym, o) in smcOrders.toMap()) {
+            if (sym in filled) {
+                smcOrders.remove(sym)
+                log("$sym: limit SMC terisi", "ok")
+                alert("$sym: limit SMC terisi (${if (o.buy) "BUY" else "SELL"})")
+                continue
+            }
+            if (now >= o.expiry) {
+                cancelSmc(a, sym)
+                log("$sym: limit SMC kedaluwarsa, dibatalkan")
+                continue
+            }
+            try {
+                val p = a.price(sym)
+                val ranAway = if (o.buy) p.getDouble("bid") >= o.tp else p.getDouble("ask") <= o.tp
+                if (ranAway) {
+                    cancelSmc(a, sym)
+                    log("$sym: harga sudah ke TP sebelum limit terisi, dibatalkan")
+                }
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    private fun placeSmc(a: MetaApi, acc: JSONObject, sym: String, s: SmcSetup, tfSec: Long, positions: List<Pos>) {
+        if (positions.any { it.symbol == sym } || smcOrders.containsKey(sym) || noMoney) return
+        val pairsOpen = (positions.map { it.symbol } + smcOrders.keys).toSet().size
+        if (pairsOpen >= cfg.getInt("max_symbols_open")) {
+            log("$sym setup SMC dilewati: sudah $pairsOpen pair aktif", "warn")
+            return
+        }
+        val sp = spec(a, sym)
+        val price = a.price(sym)
+        val bid = price.getDouble("bid")
+        val ask = price.getDouble("ask")
+        val point = sp.optDouble("point", 0.00001)
+        val digits = sp.optInt("digits", 5)
+        val minDist = (sp.optInt("stopsLevel", 0) + 2) * point
+        val maxSpread = cfg.getInt("max_spread_points")
+        val spread = ((ask - bid) / point).roundToLong()
+        if (maxSpread > 0 && spread > maxSpread) {
+            log("$sym setup SMC dilewati: spread $spread > $maxSpread point", "warn")
+            return
+        }
+        val entry = Strategy.round(s.entry, digits)
+        val sl = Strategy.round(s.sl, digits)
+        val tp = Strategy.round(s.tp, digits)
+        val risk = abs(entry - sl)
+        if (risk <= (ask - bid) * 2) {
+            log("$sym setup SMC dilewati: SL terlalu dekat dibanding spread", "warn")
+            return
+        }
+        val tickSize = sp.optDouble("tickSize", point).let { if (it > 0) it else point }
+        val tickValue = price.optDouble("lossTickValue", 0.0)
+        val vMin = sp.optDouble("minVolume", 0.01)
+        val vMax = sp.optDouble("maxVolume", 100.0)
+        val vStep = sp.optDouble("volumeStep", 0.01)
+        val lot = if (cfg.getString("risk_mode") == "percent") {
+            Strategy.lotForRisk(
+                acc.optDouble("balance") * cfg.getDouble("risk_percent") / 100,
+                risk, tickSize, tickValue, vMin, vMax, vStep
+            )
+        } else {
+            Strategy.normLot(max(vMin, min(cfg.getDouble("fixed_lot"), vMax)), vStep)
+        }
+        if (lot <= 0) {
+            log("$sym setup SMC dilewati: risiko ${cfg.getDouble("risk_percent")}% terlalu kecil untuk lot minimum $vMin", "warn")
+            return
+        }
+        // Harga sudah di dalam/melewati FVG -> market, selama belum terlalu dekat SL
+        val market = if (s.buy) ask <= entry + minDist else bid >= entry - minDist
+        val body = JSONObject()
+            .put("symbol", sym).put("volume", lot).put("stopLoss", sl).put("takeProfit", tp)
+            .put("comment", "mt5bot smc").put("magic", cfg.getLong("magic"))
+        if (market) {
+            val px = if (s.buy) ask else bid
+            val room = if (s.buy) px - sl else sl - px
+            if (room < risk * 0.5) {
+                log("$sym setup SMC dilewati: harga sudah terlalu dekat SL", "warn")
+                return
+            }
+            body.put("actionType", if (s.buy) "ORDER_TYPE_BUY" else "ORDER_TYPE_SELL")
+        } else {
+            body.put("actionType", if (s.buy) "ORDER_TYPE_BUY_LIMIT" else "ORDER_TYPE_SELL_LIMIT")
+                .put("openPrice", entry)
+        }
+        try {
+            val r = a.trade(body)
+            val side = if (s.buy) "BUY" else "SELL"
+            val how = if (market) "market" else "LIMIT ${fmtPrice(entry, digits)}"
+            val m = "$sym ${s.note}: $side $how $lot lot | SL ${fmtPrice(sl, digits)} " +
+                "TP ${fmtPrice(tp, digits)} (1:${cfg.getDouble("smc_rr")})"
+            log(m, "ok")
+            alert(m)
+            if (!market) {
+                val id = r.optString("orderId")
+                if (id.isNotEmpty()) {
+                    smcOrders[sym] = SmcOrder(id, System.currentTimeMillis() / 1000 + 8 * tfSec, s.buy, tp)
+                }
+            }
+            lastDealsAt = 0
+        } catch (e: Exception) {
+            val msg = e.message ?: "Order gagal"
+            log("$sym: $msg", "error")
+            if (msg.contains("NO_MONEY")) noMoney = true
+        }
     }
 
     private fun publish(acc: JSONObject, positions: List<Pos>, dayPl: Double, dayPlPct: Double, ddPct: Double) {

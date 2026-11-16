@@ -18,6 +18,10 @@ Cara simulasi:
 | Limit Buy & Sell OCO (jarak 0,3 / TP 0,5 / SL 1,0 ATR), simulasi menit-per-menit | H1 | 2018 / 2019 | ~11 rb / ~11 rb | ~58% | **−0,11 / −0,15 R** |
 | Limit OCO, semua 162 variasi (M5/M15/H1, limit & stop) | – | 2018–2019 | – | – | **semua rugi** |
 
+| SMC FVG + BOS (96 variasi, M5/M15/H1) | – | 2018–2019 | – | – | semua rugi, terbaik H1 ≈ −0,03 R |
+| Liquidity sweep high/low kemarin atau range Asia (36 variasi) | – | 2018–2019 | – | – | semua rugi, terbaik H1 ≈ −0,05 R |
+| **SMC ICT: sweep → BOS → FVG, killzone, TP 1:3, entry di tengah FVG** | M15 | 2018 / 2019 | 161 / 183 | ~25% | **+0,007 / −0,015 R** (impas) |
+
 Kesimpulan: di M1, spread kira-kira sama besar dengan ATR, jadi semua strategi M1 rugi. Trend Breakout H1 impas di 2018 dan untung di 2019. Tidak ada strategi yang terbukti selalu untung.
 
 Untuk menjalankan ulang: `python run.py old`, `python grid2.py`, `python detail.py`. Path data ada di `bt.py`.
